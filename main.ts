@@ -46,8 +46,9 @@ Deno.serve(async (request) => {
     }
     
     const after = url.searchParams.get("after");
+    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
     try {
-      const images = await fetchImages(tokenResult.data, after || undefined);
+      const images = await fetchImages(tokenResult.data, after || undefined, limit);
       return Response.json(images);
     } catch (error) {
       return Response.json({ error: error.message }, { status: 500 });
@@ -98,18 +99,18 @@ Deno.serve(async (request) => {
 });
 
 // Function to fetch images from the ChatGPT API using the provided token
-async function fetchImages(apiToken: string, after?: string): Promise<GalleryResponse> {
+async function fetchImages(apiToken: string, after?: string, limit?: number): Promise<GalleryResponse> {
   try {
-    // Build URL with after parameter and a large limit to reduce number of fetches
-    let url = "https://chatgpt.com/backend-api/my/recent/image_gen?limit=1000";
+    const url = new URL("https://chatgpt.com/backend-api/my/recent/image_gen");
+    url.searchParams.set("limit", String(limit && limit > 0 && limit <= 1000 ? limit : 50));
     if (after) {
-      url += "&after=" + encodeURIComponent(after);
+      url.searchParams.set("after", after);
     }
 
-    console.log("Fetching from URL:", url);
+    console.log("Fetching from URL:", url.toString());
 
     // Make request to ChatGPT API
-    const response = await fetch(url, {
+    const response = await fetch(url.toString(), {
       headers: {
         "accept": "*/*",
         "authorization": "Bearer " + apiToken,
@@ -119,8 +120,14 @@ async function fetchImages(apiToken: string, after?: string): Promise<GalleryRes
 
     // Handle error responses
     if (!response.ok) {
+      const errorBody = await response.text(); // Log response body for debugging
+      console.error("API error response body:", errorBody);
+
       if (response.status === 401) {
         throw new Error("Invalid API token");
+      }
+      if (response.status === 403) {
+        throw new Error("Access forbidden: Ensure your API token has the necessary permissions.");
       }
       throw new Error("API error: " + response.status + " " + response.statusText);
     }
@@ -131,14 +138,23 @@ async function fetchImages(apiToken: string, after?: string): Promise<GalleryRes
     
     // Process the response to use our proxy for images
     const items = data.items.map((item: ImageItem) => {
+      
       // Proxy the full image URL
       item.url = `/proxy/image?url=${encodeURIComponent(item.url)}`;
-      
-      // Proxy the thumbnail URL if it exists
-      if (item.encodings?.thumbnail?.path) {
+
+      // 確保 encodings 與 thumbnail 結構存在
+      if (!item.encodings) {
+        item.encodings = { thumbnail: { path: "" } };
+      }
+      if (!item.encodings.thumbnail) {
+        item.encodings.thumbnail = { path: "" };
+      }
+
+      // Proxy the thumbnail URL if it exists and is not null
+      if (item.encodings.thumbnail.path) {
         item.encodings.thumbnail.path = `/proxy/image?url=${encodeURIComponent(item.encodings.thumbnail.path)}`;
       }
-      
+
       return item;
     });
     
@@ -190,6 +206,12 @@ function renderGalleryPage(): string {
                 class="w-full sm:w-auto bg-primary text-white px-6 py-3 rounded hover:bg-primaryDark transition-colors">
           Save Token
         </button>
+      </div>
+      <div class="mb-4 flex items-center gap-2">
+        <label for="batchSizeInput" class="text-sm text-gray-700">Batch size:</label>
+        <input type="number" id="batchSizeInput" min="1" max="1000" step="1" value="50"
+          class="w-24 p-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary" />
+        <span class="text-xs text-gray-400">(1~1000)</span>
       </div>
       <div class="text-sm text-gray-600">
         <p class="mb-2">You need to provide your ChatGPT API token to access your images. The token is stored only in your browser's local storage and is never sent to our servers.</p>
@@ -307,6 +329,7 @@ function renderGalleryPage(): string {
     const closeModalBtn = document.getElementById('closeModal');
     const notification = document.getElementById('notification');
     const downloadBtn = document.getElementById('downloadImage');
+    const batchSizeInput = document.getElementById('batchSizeInput');
 
     // Format timestamp to readable date
     function formatDate(timestamp) {
@@ -321,7 +344,30 @@ function renderGalleryPage(): string {
       return date.toLocaleDateString(undefined, options);
     }
 
-    // Fetch all images in batches
+    // 取得批次數量，預設 50，最大 1000
+    function getBatchSize() {
+      let size = parseInt(localStorage.getItem('chatgpt_batch_size') || '50', 10);
+      if (isNaN(size) || size < 1) size = 1;
+      if (size > 1000) size = 1000;
+      return size;
+    }
+
+    // 設定批次數量到 localStorage
+    function setBatchSize(size) {
+      size = Math.max(1, Math.min(1000, parseInt(size, 10) || 50));
+      localStorage.setItem('chatgpt_batch_size', size);
+      batchSizeInput.value = size;
+    }
+
+    // 初始化批次數量 input
+    function initBatchSizeInput() {
+      batchSizeInput.value = getBatchSize();
+      batchSizeInput.addEventListener('change', () => {
+        setBatchSize(batchSizeInput.value);
+      });
+    }
+
+    // Fetch all images in batches (邊抓邊渲染)
     async function fetchAllImages() {
       console.log('Starting to fetch all images');
       const apiToken = localStorage.getItem('chatgpt_api_token');
@@ -331,30 +377,36 @@ function renderGalleryPage(): string {
         loadingIndicator.classList.add('hidden');
         return;
       }
-      
+
       // Start with a clean gallery
       galleryEl.innerHTML = '';
       totalImagesLoaded = 0;
       currentCursor = null;
       hasMoreImages = true;
-      
+
       // Show loading indicator
       loadingIndicator.classList.remove('hidden');
       summaryStats.classList.add('hidden');
-      
-      // Keep fetching batches until we have all images
-      while (hasMoreImages && !isLoading) {
-        await fetchBatch();
+
+      // 初始化批次數量 input（確保每次都同步）
+      initBatchSizeInput();
+
+      // 邊抓邊渲染
+      async function fetchAndRender() {
+        while (hasMoreImages) {
+          await fetchBatch();
+          // 每批抓完即時更新統計
+          totalImagesEl.textContent = totalImagesLoaded;
+        }
+        // Hide loading indicator and show summary when complete
+        loadingIndicator.classList.add('hidden');
+        summaryStats.classList.remove('hidden');
+        totalImagesEl.textContent = totalImagesLoaded;
+        console.log('All images fetched. Total:', totalImagesLoaded);
       }
-      
-      // Hide loading indicator and show summary when complete
-      loadingIndicator.classList.add('hidden');
-      summaryStats.classList.remove('hidden');
-      totalImagesEl.textContent = totalImagesLoaded;
-      
-      console.log('All images fetched. Total:', totalImagesLoaded);
+      fetchAndRender();
     }
-    
+
     // Fetch a single batch of images
     async function fetchBatch() {
       console.log('Fetching batch starting with after:', currentCursor);
@@ -374,10 +426,14 @@ function renderGalleryPage(): string {
       console.log('Set isLoading to true');
       
       try {
-        const url = '/api/images' + (currentCursor ? '?after=' + encodeURIComponent(currentCursor) : '');
-        console.log('Fetch URL:', url);
+        const batchSize = getBatchSize();
+        const url = '/api/images' + 
+          (currentCursor ? '?after=' + encodeURIComponent(currentCursor) : '');
+        const urlObj = new URL(url, window.location.origin);
+        urlObj.searchParams.set('limit', batchSize);
+        console.log('Fetch URL:', urlObj.toString());
         
-        const response = await fetch(url, {
+        const response = await fetch(urlObj.toString(), {
           headers: {
             'x-api-token': apiToken
           }
@@ -394,7 +450,7 @@ function renderGalleryPage(): string {
         
         // Update cursor for pagination
         currentCursor = data.cursor || null;
-        hasMoreImages = !!currentCursor;
+        hasMoreImages = !!currentCursor && data.items && data.items.length > 0;
         console.log('New cursor:', currentCursor, 'Has more images:', hasMoreImages);
         
         // Display the images
@@ -431,6 +487,14 @@ function renderGalleryPage(): string {
         img.dataset.fullImage = image.url;
         img.dataset.title = image.title || 'Untitled image';
         img.loading = 'lazy';
+
+        // 如果封面載入失敗則自動載入原圖
+        img.onerror = function () {
+          if (img.src !== image.url) {
+            console.warn('Thumbnail failed, fallback to original:', image.url);
+            img.src = image.url;
+          }
+        };
         
         // Create info section
         const info = document.createElement('div');
