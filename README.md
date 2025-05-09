@@ -20,7 +20,7 @@ CloseAI Image Gallery 是一個輕量級應用程式，可協助你查看並管�
 
 最簡單的方式是訪問我們預先部署的版本：
 
-[CloseAI Image Gallery](https://clos ai-image-galary.deno.dev/)
+[CloseAI Image Gallery](https://closai-image-galary.deno.dev/)
 
 ### 方法二：本地運行
 
