@@ -4,14 +4,16 @@ import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 // Types for our image gallery
 interface ImageItem {
   id: string;
-  url: string;
+  url: string; // This will be the proxied URL
+  originalUrl?: string; // Store the original URL
   width: number;
   height: number;
   title: string;
   created_at: number;
   encodings: {
     thumbnail: {
-      path: string;
+      path: string; // This will be the proxied URL
+      originalPath?: string; // Store original thumbnail URL
     };
   };
 }
@@ -36,9 +38,8 @@ Deno.serve(async (request) => {
   // Handle API route for images
   if (url.pathname === "/api/images") {
     const token = request.headers.get("x-api-token");
-    const teamId = request.headers.get("x-team-id"); // Get Team ID from header
+    const teamId = request.headers.get("x-team-id");
 
-    // Validate token with Zod
     const tokenResult = TokenSchema.safeParse(token);
     if (!tokenResult.success) {
       return Response.json(
@@ -55,7 +56,7 @@ Deno.serve(async (request) => {
     try {
       const images = await fetchImages(
         tokenResult.data,
-        teamId || undefined, // Pass teamId to fetchImages
+        teamId || undefined,
         after || undefined,
         limit,
       );
@@ -73,23 +74,17 @@ Deno.serve(async (request) => {
     }
 
     try {
-      // Forward the image from the original source
       const response = await fetch(imageUrl);
-
       if (!response.ok) {
         throw new Error(
           `Failed to fetch image: ${response.status} ${response.statusText}`,
         );
       }
-
-      // Get content type from response or default to image/jpeg
       const contentType = response.headers.get("content-type") || "image/jpeg";
-
-      // Stream the image content
       return new Response(response.body, {
         headers: {
           "content-type": contentType,
-          "cache-control": "public, max-age=86400", // Cache for 24 hours
+          "cache-control": "public, max-age=86400",
           "access-control-allow-origin": "*",
         },
       });
@@ -102,15 +97,11 @@ Deno.serve(async (request) => {
     }
   }
 
-  // Serve the main HTML page for all other routes
   return new Response(renderGalleryPage(), {
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-    },
+    headers: { "content-type": "text/html; charset=utf-8" },
   });
 });
 
-// Function to fetch images from the ChatGPT API using the provided token
 async function fetchImages(
   apiToken: string,
   teamId?: string,
@@ -123,74 +114,75 @@ async function fetchImages(
       "limit",
       String(limit && limit > 0 && limit <= 1000 ? limit : 50),
     );
-    if (after) {
-      url.searchParams.set("after", after);
-    }
+    if (after) url.searchParams.set("after", after);
 
-    console.log("Fetching from URL:", url.toString());
-    console.log("Using API Token:", apiToken ? "Yes" : "No");
-    console.log("Using Team ID:", teamId || "No (Personal Account)");
+    console.log(
+      `Fetching from URL: ${url.toString()}, Team ID: ${teamId || "Personal"}`,
+    );
 
     const headers: HeadersInit = {
       "accept": "*/*",
       "authorization": "Bearer " + apiToken,
       "cache-control": "no-cache",
       "user-agent":
-        "DenoGalleryApp/1.0 (Deno; like ChatGPT Interface User)", // Added User-Agent
+        "DenoGalleryApp/1.0 (Deno; like ChatGPT Interface User)",
     };
-
     if (teamId && teamId.trim() !== "") {
-      headers["chatgpt-account-id"] = teamId; // Add team ID header if provided
+      headers["chatgpt-account-id"] = teamId;
     }
 
-    // Make request to ChatGPT API
     const response = await fetch(url.toString(), { headers });
 
-    // Handle error responses
     if (!response.ok) {
-      const errorBody = await response.text(); // Log response body for debugging
+      const errorBody = await response.text();
       console.error("API error response body:", errorBody);
-
-      if (response.status === 401) {
+      if (response.status === 401)
         throw new Error(
           "Invalid API token or unauthorized for the specified account.",
         );
-      }
-      if (response.status === 403) {
+      if (response.status === 403)
         throw new Error(
-          "Access forbidden: Ensure your API token has the necessary permissions for the specified account.",
+          "Access forbidden: Ensure permissions for the specified account.",
         );
-      }
       throw new Error(
-        "API error: " + response.status + " " + response.statusText,
+        `API error: ${response.status} ${response.statusText}`,
       );
     }
 
-    // Parse the response
     const data = await response.json();
     console.log(`Retrieved ${data.items?.length || 0} images in this batch`);
 
-    // Process the response to use our proxy for images
-    const items = data.items.map((item: ImageItem) => {
-      // Proxy the full image URL
-      item.url = `/proxy/image?url=${encodeURIComponent(item.url)}`;
+    const items = data.items.map((item: any) => {
+      const originalFullUrl = item.url;
+      const originalThumbnailPath = item.encodings?.thumbnail?.path;
 
-      // 確保 encodings 與 thumbnail 結構存在
-      if (!item.encodings) {
-        item.encodings = { thumbnail: { path: "" } };
+      const processedItem: ImageItem = {
+        id: item.id,
+        url: `/proxy/image?url=${encodeURIComponent(originalFullUrl)}`,
+        originalUrl: originalFullUrl, // Store original URL
+        width: item.width,
+        height: item.height,
+        title: item.title,
+        created_at: item.created_at,
+        encodings: {
+          thumbnail: {
+            path: originalThumbnailPath
+              ? `/proxy/image?url=${
+                encodeURIComponent(originalThumbnailPath)
+              }`
+              : "",
+            originalPath: originalThumbnailPath, // Store original thumbnail URL
+          },
+        },
+      };
+      // Ensure encodings structure if missing from API
+      if (!processedItem.encodings) {
+        processedItem.encodings = { thumbnail: { path: "", originalPath: "" } };
       }
-      if (!item.encodings.thumbnail) {
-        item.encodings.thumbnail = { path: "" };
+      if (!processedItem.encodings.thumbnail) {
+        processedItem.encodings.thumbnail = { path: "", originalPath: "" };
       }
-
-      // Proxy the thumbnail URL if it exists and is not null
-      if (item.encodings.thumbnail.path) {
-        item.encodings.thumbnail.path = `/proxy/image?url=${
-          encodeURIComponent(item.encodings.thumbnail.path)
-        }`;
-      }
-
-      return item;
+      return processedItem;
     });
 
     return {
@@ -203,7 +195,6 @@ async function fetchImages(
   }
 }
 
-// Function to render the HTML for the gallery page
 function renderGalleryPage(): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -211,8 +202,8 @@ function renderGalleryPage(): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ChatGPT Image Gallery</title>
-  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -226,6 +217,10 @@ function renderGalleryPage(): string {
       }
     }
   </script>
+  <style>
+    .progress-bar-container { width: 100%; background-color: #e0e0e0; border-radius: 4px; margin-top: 0.5rem; height: 10px; }
+    .progress-bar { width: 0%; height: 100%; background-color: #10a37f; border-radius: 4px; transition: width 0.3s ease-in-out; }
+  </style>
 </head>
 <body class="bg-gray-50 text-gray-800">
   <div class="max-w-6xl mx-auto px-4 py-6">
@@ -244,10 +239,14 @@ function renderGalleryPage(): string {
         <input type="text" id="teamIdInput" placeholder="Enter Team ID for team workspace"
                class="w-full p-3 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary" />
       </div>
-      <div class="mb-4 sm:flex sm:gap-4">
+      <div class="mb-4 sm:flex sm:items-center sm:gap-4">
         <button id="saveSettings"
                 class="w-full sm:w-auto bg-primary text-white px-6 py-3 rounded hover:bg-primaryDark transition-colors mb-3 sm:mb-0">
           Save Settings & Load Images
+        </button>
+        <button id="exportZipBtn"
+                class="w-full sm:w-auto bg-green-600 text-white px-6 py-3 rounded hover:bg-green-700 transition-colors mb-3 sm:mb-0">
+          Export All as ZIP
         </button>
         <div class="flex items-center gap-2">
           <label for="batchSizeInput" class="text-sm text-gray-700">Batch size:</label>
@@ -256,36 +255,34 @@ function renderGalleryPage(): string {
           <span class="text-xs text-gray-400">(1~1000)</span>
         </div>
       </div>
+      <div class="mb-4">
+        <label for="includeMetadataCheckbox" class="flex items-center text-sm text-gray-700">
+          <input type="checkbox" id="includeMetadataCheckbox" class="mr-2 h-4 w-4 text-primary focus:ring-primary border-gray-300 rounded" checked>
+          Include metadata.json in ZIP
+        </label>
+      </div>
+      <div id="exportStatus" class="text-sm text-gray-600 mt-4 hidden">
+        <p id="exportStatusText">Starting export...</p>
+        <div class="progress-bar-container">
+          <div id="exportProgressBar" class="progress-bar"></div>
+        </div>
+      </div>
       <div class="text-sm text-gray-600">
-        <p class="mb-2">You need to provide your ChatGPT API token. If accessing a team workspace, also provide the Team ID. Settings are stored only in your browser's local storage.</p>
-        <p class="font-semibold mb-1">How to get your API Token:</p>
+        <p class="mb-2">Provide your ChatGPT API token. For team workspaces, also provide the Team ID. Settings are stored locally.</p>
+        <p class="font-semibold mb-1">How to get API Token & Team ID:</p>
         <ol class="list-decimal pl-5 space-y-1 mb-3">
-          <li>Log in to <a href="https://chatgpt.com" target="_blank" class="text-primary hover:underline">ChatGPT</a></li>
-          <li>Open browser Developer Tools (F12 or right-click > Inspect)</li>
-          <li>Go to Network tab</li>
-          <li>Refresh the page or make any request (e.g., send a message)</li>
-          <li>Find any request to the ChatGPT API (e.g., a request to \`.../conversation\`)</li>
-          <li>In the Request Headers, find the "Authorization" header</li>
-          <li>Copy the token value (it starts with "Bearer "). Paste the entire value, or just the part after "Bearer ".</li>
-        </ol>
-        <p class="font-semibold mb-1">How to get your Team ID (if applicable):</p>
-        <ol class="list-decimal pl-5 space-y-1">
-          <li>In ChatGPT, ensure you are in your Team Workspace.</li>
-          <li>Open browser Developer Tools (F12) and go to the Network tab.</li>
-          <li>Refresh the page or make any request.</li>
-          <li>Find a request to \`chatgpt.com\`.</li>
-          <li>In the Request Headers, look for the \`chatgpt-account-id\` header. Copy its value.</li>
-          <li>(Alternatively, in some cases, you might find an \`_account\` cookie with the same ID).</li>
+          <li>Login to <a href="https://chatgpt.com" target="_blank" class="text-primary hover:underline">ChatGPT</a>. Open DevTools (F12) > Network.</li>
+          <li>Refresh/make a request. Find API calls (e.g., to \`.../conversation\`).</li>
+          <li>Token: "Authorization" header (copy value after "Bearer ").</li>
+          <li>Team ID: \`chatgpt-account-id\` header (if in team workspace).</li>
         </ol>
       </div>
     </div>
 
     <div id="galleryContainer">
-      <div id="gallery" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-        <!-- Images will be loaded here -->
-      </div>
+      <div id="gallery" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"></div>
       <div id="loadingIndicator" class="text-center py-8">
-        <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
+        <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent"></div>
         <p class="mt-2 text-gray-600">Loading all images...</p>
       </div>
       <div id="summaryStats" class="text-center py-4 text-gray-600 hidden">
@@ -306,56 +303,13 @@ function renderGalleryPage(): string {
       </a>
     </div>
   </div>
-
   <div id="notification" class="fixed top-5 right-5 bg-primary text-white p-4 rounded shadow-lg transform translate-x-full transition-transform duration-300 z-50">
     Settings saved successfully!
   </div>
 
   <script>
-    // JWT decoding function
-    function parseJwt(token) {
-      try {
-        const base64Url = token.split('.')[1];
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-        }).join(''));
-        return JSON.parse(jsonPayload);
-      } catch (e) {
-        console.error('Error parsing JWT:', e);
-        return null;
-      }
-    }
-
-    // Validate token
-    function validateToken(token) {
-      if (!token || token.trim() === '') {
-        return { success: false, error: 'Token is required' };
-      }
-      if (token.trim().length < 10) {
-        return { success: false, error: 'Token is too short' };
-      }
-      // Allow space if it's part of "Bearer ", but the actual token part shouldn't have spaces.
-      // The extraction logic handles "Bearer " prefix.
-      const actualToken = token.startsWith('Bearer ') ? token.substring(7).trim() : token;
-      if (actualToken.includes(' ')) {
-          return { success: false, error: 'The token itself (after Bearer) should not contain spaces.' };
-      }
-
-      try {
-        const decoded = parseJwt(actualToken);
-        if (decoded && decoded.exp) {
-          const expirationTime = decoded.exp * 1000;
-          const currentTime = Date.now();
-          if (currentTime >= expirationTime) {
-            return { success: false, error: 'Token has expired. Please log in to ChatGPT again to get a new token.' };
-          }
-        }
-      } catch (e) {
-        console.warn('Could not check token expiration:', e);
-      }
-      return { success: true, data: actualToken };
-    }
+    // JSZip will be available globally
+    // ... (parseJwt, validateToken, formatDate, getBatchSize, setBatchSize, initBatchSizeInput from previous version) ...
 
     // Global variables
     let currentCursor = null;
@@ -365,8 +319,13 @@ function renderGalleryPage(): string {
 
     // Elements
     const tokenInput = document.getElementById('tokenInput');
-    const teamIdInput = document.getElementById('teamIdInput'); // New team ID input
-    const saveSettingsBtn = document.getElementById('saveSettings'); // Renamed button
+    const teamIdInput = document.getElementById('teamIdInput');
+    const saveSettingsBtn = document.getElementById('saveSettings');
+    const exportZipBtn = document.getElementById('exportZipBtn');
+    const includeMetadataCheckbox = document.getElementById('includeMetadataCheckbox'); // New checkbox
+    const exportStatusEl = document.getElementById('exportStatus');
+    const exportStatusTextEl = document.getElementById('exportStatusText');
+    const exportProgressBarEl = document.getElementById('exportProgressBar');
     const errorMessage = document.getElementById('errorMessage');
     const galleryEl = document.getElementById('gallery');
     const loadingIndicator = document.getElementById('loadingIndicator');
@@ -380,44 +339,48 @@ function renderGalleryPage(): string {
     const downloadBtn = document.getElementById('downloadImage');
     const batchSizeInput = document.getElementById('batchSizeInput');
 
-    function formatDate(timestamp) {
+
+    // --- Helper functions for ZIP export ---
+    function formatDateForFilename(timestamp) {
       const date = new Date(timestamp * 1000);
-      const options = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-      return date.toLocaleDateString(undefined, options);
+      const year = date.getFullYear();
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const day = date.getDate().toString().padStart(2, '0');
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      const seconds = date.getSeconds().toString().padStart(2, '0');
+      return \`\${year}\${month}\${day}_\${hours}\${minutes}\${seconds}\`;
     }
 
-    function getBatchSize() {
-      let size = parseInt(localStorage.getItem('chatgpt_batch_size') || '50', 10);
-      if (isNaN(size) || size < 1) size = 1;
-      if (size > 1000) size = 1000;
-      return size;
+    function sanitizeFilename(name, maxLength = 100) {
+      let sanitized = name.replace(/[<>:"/\\\\|?*\\s]+/g, '_').replace(/[\\x00-\\x1f\\x7f]/g, '');
+      if (sanitized.length > maxLength) {
+        sanitized = sanitized.substring(0, maxLength);
+      }
+      return sanitized || 'image';
     }
 
-    function setBatchSize(size) {
-      size = Math.max(1, Math.min(1000, parseInt(size, 10) || 50));
-      localStorage.setItem('chatgpt_batch_size', size);
-      batchSizeInput.value = size;
+    function getExtensionFromContentType(contentType) {
+      if (!contentType) return 'jpg'; // Default extension
+      if (contentType.includes('jpeg')) return 'jpg';
+      if (contentType.includes('png')) return 'png';
+      if (contentType.includes('gif')) return 'gif';
+      if (contentType.includes('webp')) return 'webp';
+      const parts = contentType.split('/');
+      return parts.length > 1 ? parts[1].split(';')[0].trim() : 'jpg'; // Handle cases like 'image/jpeg; charset=utf-8'
     }
+    // --- End Helper functions for ZIP export ---
 
-    function initBatchSizeInput() {
-      batchSizeInput.value = getBatchSize();
-      batchSizeInput.addEventListener('change', () => {
-        setBatchSize(batchSizeInput.value);
-      });
-    }
 
     async function fetchAllImages() {
-      console.log('Starting to fetch all images');
+      // ... (same as previous version)
+      console.log('Starting to fetch all images for display');
       const apiToken = localStorage.getItem('chatgpt_api_token');
-      // const teamId = localStorage.getItem('chatgpt_team_id'); // Team ID will be passed in headers by fetchBatch
-
       if (!apiToken) {
-        console.error('No API token found');
         galleryEl.innerHTML = '<div class="col-span-full bg-white rounded-lg shadow p-10 text-center text-gray-600">Enter your API token to view your images</div>';
         loadingIndicator.classList.add('hidden');
         return;
       }
-
       galleryEl.innerHTML = '';
       totalImagesLoaded = 0;
       currentCursor = null;
@@ -428,83 +391,70 @@ function renderGalleryPage(): string {
 
       async function fetchAndRender() {
         while (hasMoreImages) {
-          await fetchBatch();
+          await fetchBatch(true);
           totalImagesEl.textContent = totalImagesLoaded;
         }
         loadingIndicator.classList.add('hidden');
         summaryStats.classList.remove('hidden');
         totalImagesEl.textContent = totalImagesLoaded;
-        console.log('All images fetched. Total:', totalImagesLoaded);
       }
       fetchAndRender();
     }
 
-    async function fetchBatch() {
-      console.log('Fetching batch starting with after:', currentCursor);
-      if (isLoading) {
-        console.log('Already loading, waiting for completion');
-        return;
-      }
-      const apiToken = localStorage.getItem('chatgpt_api_token');
-      const teamId = localStorage.getItem('chatgpt_team_id'); // Get team ID
+    async function fetchBatch(forDisplay = true) {
+      // ... (same as previous version)
+      console.log('Fetching batch. For display:', forDisplay, 'After:', currentCursor);
+      if (isLoading && forDisplay) return;
 
-      if (!apiToken) {
-        console.error('No API token found');
-        return;
-      }
-      isLoading = true;
-      console.log('Set isLoading to true');
+      const apiToken = localStorage.getItem('chatgpt_api_token');
+      const teamId = localStorage.getItem('chatgpt_team_id');
+      if (!apiToken) return forDisplay ? showError('No API token found.') : null;
+
+      if (forDisplay) isLoading = true;
 
       try {
         const batchSize = getBatchSize();
         const url = '/api/images' + (currentCursor ? '?after=' + encodeURIComponent(currentCursor) : '');
         const urlObj = new URL(url, window.location.origin);
-        urlObj.searchParams.set('limit', batchSize);
-        console.log('Fetch URL:', urlObj.toString());
+        urlObj.searchParams.set('limit', batchSize.toString());
 
         const headers = { 'x-api-token': apiToken };
-        if (teamId && teamId.trim() !== "") {
-          headers['x-team-id'] = teamId; // Add team ID to request to our backend
-          console.log('Sending x-team-id:', teamId);
-        } else {
-          console.log('No team ID to send, fetching for personal account.');
-        }
+        if (teamId && teamId.trim() !== "") headers['x-team-id'] = teamId;
 
         const response = await fetch(urlObj.toString(), { headers });
-
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Unknown error structure' }));
-          const errorMessageText = errorData.error || ('Error: ' + response.status + ' ' + response.statusText);
-          throw new Error(response.status === 401
-            ? 'Invalid API token or unauthorized for the specified account. Please check and try again.'
-            : errorMessageText);
+          const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+          throw new Error(errorData.error || \`Error: \${response.status}\`);
         }
-
         const data = await response.json();
-        console.log('Batch received with', data.items ? data.items.length : 0, 'images');
-        currentCursor = data.cursor || null;
-        hasMoreImages = !!currentCursor && data.items && data.items.length > 0;
-        console.log('New cursor:', currentCursor, 'Has more images:', hasMoreImages);
 
-        if (data.items && data.items.length > 0) {
-          displayImages(data.items);
-          totalImagesLoaded += data.items.length;
+        if (forDisplay) {
+            currentCursor = data.cursor || null;
+            hasMoreImages = !!currentCursor && data.items && data.items.length > 0;
+            if (data.items && data.items.length > 0) {
+                displayImages(data.items);
+                totalImagesLoaded += data.items.length;
+            } else {
+                hasMoreImages = false;
+            }
         } else {
-          hasMoreImages = false;
+            return { items: data.items || [], cursor: data.cursor || null };
         }
+
       } catch (error) {
-        console.error('Error fetching images:', error);
-        showError(error.message || 'Error loading images. Please try again later.');
-        hasMoreImages = false;
+        console.error('Error fetching batch:', error);
+        if (forDisplay) showError(error.message);
+        if (forDisplay) hasMoreImages = false;
+        return null;
       } finally {
-        isLoading = false;
-        console.log('Set isLoading to false');
+        if (forDisplay) isLoading = false;
       }
     }
 
+
     function displayImages(images) {
-      console.log('Displaying', images.length, 'images');
-      images.forEach(image => {
+      // ... (same as previous version)
+       images.forEach(image => {
         const item = document.createElement('div');
         item.className = 'bg-white rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-all hover:-translate-y-1';
         const img = document.createElement('img');
@@ -516,7 +466,6 @@ function renderGalleryPage(): string {
         img.loading = 'lazy';
         img.onerror = function () {
           if (img.src !== image.url) {
-            console.warn('Thumbnail failed, fallback to original:', image.url);
             img.src = image.url;
           }
         };
@@ -537,154 +486,240 @@ function renderGalleryPage(): string {
       });
     }
 
-    function openModal(imageSrc, imageTitle) {
-      console.log('Opening modal with image:', imageSrc);
-      modalImage.src = imageSrc;
-      modalImage.alt = imageTitle;
-      modalTitle.textContent = imageTitle;
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
-    }
+    // --- ZIP Export Logic ---
+    async function handleExportAllAsZip() {
+      const apiToken = localStorage.getItem('chatgpt_api_token');
+      if (!apiToken) {
+        showError('API Token is required for export.');
+        return;
+      }
+      if (!window.JSZip) {
+        showError('JSZip library not loaded. Cannot export.');
+        return;
+      }
 
-    function showError(message) {
-      console.error('Error:', message);
-      errorMessage.textContent = message;
-      errorMessage.classList.remove('hidden');
-    }
+      exportZipBtn.disabled = true;
+      exportStatusEl.classList.remove('hidden');
+      exportStatusTextEl.textContent = 'Starting export: Fetching image list...';
+      exportProgressBarEl.style.width = '0%';
 
-    function hideError() {
-      errorMessage.classList.add('hidden');
-    }
+      const allImageMetadata = []; // Will store ImageItem objects
+      let exportCursor = null;
+      let hasMoreToExport = true;
+      let batchesFetched = 0;
+      const batchSizeForExport = 100;
 
-    function showNotification() {
-      notification.classList.add('translate-x-0');
-      notification.classList.remove('translate-x-full');
-      setTimeout(() => {
-        notification.classList.add('translate-x-full');
-        notification.classList.remove('translate-x-0');
-      }, 3000);
+      try {
+        // 1. Collect all image metadata
+        while (hasMoreToExport) {
+          batchesFetched++;
+          exportStatusTextEl.textContent = \`Fetching image metadata (Batch \${batchesFetched})...\`;
+
+          const teamId = localStorage.getItem('chatgpt_team_id');
+          const url = '/api/images' + (exportCursor ? '?after=' + encodeURIComponent(exportCursor) : '');
+          const urlObj = new URL(url, window.location.origin);
+          urlObj.searchParams.set('limit', batchSizeForExport.toString());
+
+          const headers = { 'x-api-token': apiToken };
+          if (teamId && teamId.trim() !== "") headers['x-team-id'] = teamId;
+
+          const response = await fetch(urlObj.toString(), { headers });
+          if (!response.ok) throw new Error(\`Failed to fetch image metadata: \${response.status}\`);
+
+          const data = await response.json(); // Expects GalleryResponse structure
+          if (data.items && data.items.length > 0) {
+            // data.items are already processed ImageItem objects from our backend
+            allImageMetadata.push(...data.items);
+          }
+          exportCursor = data.cursor;
+          hasMoreToExport = !!exportCursor && data.items && data.items.length > 0;
+          // Simple progress for metadata fetching, assuming roughly 10 batches max for this stage
+          exportProgressBarEl.style.width = \`\${Math.min(10, (batchesFetched * 1)) * 10}%\`;
+        }
+
+        if (allImageMetadata.length === 0) {
+          exportStatusTextEl.textContent = 'No images found to export.';
+          exportProgressBarEl.style.width = '100%';
+          setTimeout(() => exportStatusEl.classList.add('hidden'), 3000);
+          return;
+        }
+
+        exportStatusTextEl.textContent = \`Found \${allImageMetadata.length} images. Preparing to ZIP...\`;
+        // Reset progress bar for zipping stage, starting from 10% (after metadata fetch)
+        let baseZipProgress = 10;
+        exportProgressBarEl.style.width = \`\${baseZipProgress}%\`;
+
+        const zip = new JSZip();
+
+        // 2. Add metadata.json if checkbox is checked
+        if (includeMetadataCheckbox.checked) {
+          exportStatusTextEl.textContent = 'Adding metadata.json...';
+          // Create a clean version of metadata for export (e.g., remove proxied URLs if desired, or keep them)
+          // For simplicity, we'll export the ImageItem structure as is, which includes original and proxied URLs.
+          const metadataToExport = allImageMetadata.map(item => ({
+            id: item.id,
+            title: item.title,
+            created_at: item.created_at,
+            width: item.width,
+            height: item.height,
+            original_url: item.originalUrl,
+            original_thumbnail_url: item.encodings.thumbnail.originalPath
+          }));
+          zip.file("metadata.json", JSON.stringify(metadataToExport, null, 2));
+          baseZipProgress = 15; // Increment base progress
+          exportProgressBarEl.style.width = \`\${baseZipProgress}%\`;
+        }
+
+
+        // 3. Fetch image blobs and add to ZIP
+        for (let i = 0; i < allImageMetadata.length; i++) {
+          const imageItem = allImageMetadata[i]; // This is an ImageItem
+          // Calculate progress for zipping images, accounting for baseZipProgress
+          const imageZipProgress = ((i + 1) / allImageMetadata.length) * (100 - baseZipProgress);
+          const currentTotalProgress = baseZipProgress + imageZipProgress;
+
+          exportStatusTextEl.textContent = \`Zipping image \${i + 1} of \${allImageMetadata.length}: \${imageItem.title || 'Untitled'}\`;
+          exportProgressBarEl.style.width = \`\${Math.round(currentTotalProgress)}%\`;
+
+          try {
+            // imageItem.url is already the proxied URL: /proxy/image?url=ENCODED_ORIGINAL_URL
+            const imageResponse = await fetch(imageItem.url);
+            if (!imageResponse.ok) {
+              console.warn(\`Skipping \${imageItem.title}: Failed to fetch blob (\${imageResponse.status})\`);
+              continue;
+            }
+            const blob = await imageResponse.blob();
+            const contentType = imageResponse.headers.get('content-type');
+            const extension = getExtensionFromContentType(contentType);
+            const datePrefix = formatDateForFilename(imageItem.created_at);
+            const titlePart = sanitizeFilename(imageItem.title || imageItem.id);
+            const filename = \`images/\${datePrefix}_\${titlePart}.\${extension}\`; // Put images in an 'images' subfolder
+            zip.file(filename, blob);
+          } catch (fetchError) {
+            console.warn(\`Skipping \${imageItem.title} due to fetch error:\`, fetchError);
+          }
+        }
+
+        // 4. Generate and download ZIP
+        exportStatusTextEl.textContent = 'Generating ZIP file... Please wait.';
+        exportProgressBarEl.style.width = '100%';
+        const zipContent = await zip.generateAsync({ type: "blob" });
+
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(zipContent);
+        const workspaceName = localStorage.getItem('chatgpt_team_id') ? 'team' : 'personal';
+        link.download = \`chatgpt_images_\${workspaceName}_\${formatDateForFilename(Date.now()/1000)}.zip\`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+        exportStatusTextEl.textContent = 'Export complete! ZIP file downloaded.';
+      } catch (error) {
+        console.error('Error during ZIP export:', error);
+        showError(\`Export failed: \${error.message}\`);
+        exportStatusTextEl.textContent = \`Export failed: \${error.message}\`;
+      } finally {
+        exportZipBtn.disabled = false;
+        setTimeout(() => {
+          exportStatusEl.classList.add('hidden');
+          exportProgressBarEl.style.width = '0%';
+        }, 5000);
+      }
     }
+    // --- End ZIP Export Logic ---
+
+    // ... (openModal, showError, hideError, showNotification, init, etc. from previous version) ...
+    // Ensure init() sets up all event listeners correctly.
 
     function init() {
       console.log('Initializing app...');
       const apiToken = localStorage.getItem('chatgpt_api_token');
-      const teamId = localStorage.getItem('chatgpt_team_id'); // Load team ID
+      const teamId = localStorage.getItem('chatgpt_team_id');
+      const includeMeta = localStorage.getItem('chatgpt_include_metadata');
 
       if (apiToken) {
-        console.log('Found stored token');
-        tokenInput.value = apiToken; // Pre-fill token
-        if (teamId) {
-          teamIdInput.value = teamId; // Pre-fill team ID
-          console.log('Found stored team ID:', teamId);
-        }
+        tokenInput.value = apiToken;
+        if (teamId) teamIdInput.value = teamId;
+        if (includeMeta !== null) includeMetadataCheckbox.checked = includeMeta === 'true';
+
 
         try {
-          const decoded = parseJwt(apiToken); // Validate only the token part
-          if (decoded && decoded.exp) {
-            const expirationTime = decoded.exp * 1000;
-            const currentTime = Date.now();
-            if (currentTime >= expirationTime) {
-              console.warn('Token expired');
-              showError('Your saved token has expired. Please log in to ChatGPT again to get a new token.');
-              galleryEl.innerHTML = '<div class="col-span-full bg-white rounded-lg shadow p-10 text-center text-gray-600">Enter a valid API token to view your images</div>';
-              loadingIndicator.classList.add('hidden');
-              return;
-            }
+          const decoded = parseJwt(apiToken.startsWith('Bearer ') ? apiToken.substring(7) : apiToken);
+          if (decoded && decoded.exp && (decoded.exp * 1000 < Date.now())) {
+            showError('Saved token has expired. Please get a new one.');
+            loadingIndicator.classList.add('hidden');
+            return;
           }
-        } catch (e) {
-          console.warn('Could not check token expiration:', e);
-        }
-        console.log('Token seems okay, starting to fetch images');
+        } catch (e) { /* ignore */ }
         setTimeout(fetchAllImages, 100);
       } else {
-        console.log('No token found');
-        galleryEl.innerHTML = '<div class="col-span-full bg-white rounded-lg shadow p-10 text-center text-gray-600">Enter your API token to view your images</div>';
+        galleryEl.innerHTML = '<div class="col-span-full bg-white rounded-lg shadow p-10 text-center text-gray-600">Enter API token to view images.</div>';
         loadingIndicator.classList.add('hidden');
       }
 
-      console.log('Setting up event listeners');
       saveSettingsBtn.addEventListener('click', () => {
-        console.log('Save settings clicked');
         const rawToken = tokenInput.value.trim();
-        const newTeamId = teamIdInput.value.trim(); // Get team ID
-
-        const tokenToValidate = rawToken.startsWith('Bearer ')
-          ? rawToken.substring(7).trim()
-          : rawToken;
-
-        console.log('Validating token');
-        const validationResult = validateToken(tokenToValidate); // Validate the actual token part
+        const newTeamId = teamIdInput.value.trim();
+        const tokenToValidate = rawToken.startsWith('Bearer ') ? rawToken.substring(7).trim() : rawToken;
+        const validationResult = validateToken(tokenToValidate);
 
         if (!validationResult.success) {
           showError(validationResult.error);
           return;
         }
+        localStorage.setItem('chatgpt_api_token', tokenToValidate);
+        if (newTeamId) localStorage.setItem('chatgpt_team_id', newTeamId);
+        else localStorage.removeItem('chatgpt_team_id');
+        localStorage.setItem('chatgpt_include_metadata', includeMetadataCheckbox.checked.toString());
 
-        console.log('Token valid, saving');
-        localStorage.setItem('chatgpt_api_token', tokenToValidate); // Save the actual token
-        if (newTeamId) {
-          localStorage.setItem('chatgpt_team_id', newTeamId);
-          console.log('Saved team ID:', newTeamId);
-        } else {
-          localStorage.removeItem('chatgpt_team_id'); // Clear team ID if empty
-          console.log('Cleared team ID');
-        }
 
         showNotification();
         hideError();
         fetchAllImages();
       });
 
+      exportZipBtn.addEventListener('click', handleExportAllAsZip);
+      includeMetadataCheckbox.addEventListener('change', () => {
+         localStorage.setItem('chatgpt_include_metadata', includeMetadataCheckbox.checked.toString());
+      });
+
+
       downloadBtn.addEventListener('click', () => {
-        console.log('Download clicked');
         const imageSrc = modalImage.src;
         const imageTitle = modalTitle.textContent || 'image';
         const tempLink = document.createElement('a');
         tempLink.href = imageSrc;
-        tempLink.download = imageTitle.replace(/[^a-z0-9_\\-\\.]/gi, '_') + '.jpg'; // Sanitize filename
+        tempLink.download = sanitizeFilename(imageTitle) + '.' + getExtensionFromContentType(null); // Default to jpg if type unknown
         document.body.appendChild(tempLink);
         tempLink.click();
         document.body.removeChild(tempLink);
       });
 
       closeModalBtn.addEventListener('click', () => {
-        console.log('Close modal clicked');
         modal.classList.add('hidden');
         modal.classList.remove('flex');
       });
-
       modal.addEventListener('click', (e) => {
         if (e.target === modal) {
-          console.log('Clicked outside modal');
           modal.classList.add('hidden');
           modal.classList.remove('flex');
         }
       });
-
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
-          console.log('Escape key pressed');
           modal.classList.add('hidden');
           modal.classList.remove('flex');
         }
       });
-
-      tokenInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          console.log('Enter key pressed in token input');
-          saveSettingsBtn.click();
-        }
-      });
-      teamIdInput.addEventListener('keydown', (e) => { // Enter key for team ID input
-        if (e.key === 'Enter') {
-          console.log('Enter key pressed in team ID input');
-          saveSettingsBtn.click();
-        }
-      });
+      tokenInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSettingsBtn.click(); });
+      teamIdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSettingsBtn.click(); });
 
       console.log('Initialization complete');
     }
 
+
+    // Start the app
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', init);
     } else {
