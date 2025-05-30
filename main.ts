@@ -1,6 +1,5 @@
-// Deno Gallery Application with proxied requests for global access
-// Save this entire file as e.g., gallery.html and run with:
-// deno run --allow-net --allow-read --allow-env gallery.html
+// Save this entire file as gallery.ts and run with:
+// deno run --allow-net --allow-read --allow-env gallery.ts
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 
 // --- Types ---
@@ -35,17 +34,14 @@ const TokenSchema = z
   });
 
 // --- Deno Server Logic ---
-if (Deno.args.includes("--serve")) { // Simple way to only run server part if desired
-  console.log("Starting Deno HTTP server on http://localhost:8000");
-  Deno.serve(httpHandler);
-} else if (import.meta.main) { // Default: serve if run directly
+if (Deno.args.includes("--serve") || import.meta.main) {
   console.log("Starting Deno HTTP server on http://localhost:8000");
   Deno.serve(httpHandler);
 }
 
-
 async function httpHandler(request: Request): Promise<Response> {
   const url = new URL(request.url);
+  console.log(`[SERVER] Received request: ${request.method} ${url.pathname}`);
 
   if (url.pathname === "/api/images") {
     return handleApiImages(request);
@@ -55,13 +51,14 @@ async function httpHandler(request: Request): Promise<Response> {
     return handleProxyImage(request);
   }
 
-  // Serve the main HTML page for all other routes
   if (url.pathname === "/" || url.pathname.endsWith(".html")) {
-    return new Response(renderGalleryPage(), {
+    console.log("[SERVER] Serving main HTML page.");
+    return new Response(renderGalleryPageHTML(), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
 
+  console.log(`[SERVER] Path not found: ${url.pathname}`);
   return new Response("Not Found", { status: 404 });
 }
 
@@ -69,9 +66,12 @@ async function handleApiImages(request: Request): Promise<Response> {
   const token = request.headers.get("x-api-token");
   const teamId = request.headers.get("x-team-id");
   const url = new URL(request.url);
+  console.log(`[SERVER /api/images] Token: ${token ? "Present" : "Missing"}, TeamID: ${teamId || "N/A"}, After: ${url.searchParams.get("after")}`);
+
 
   const tokenResult = TokenSchema.safeParse(token);
   if (!tokenResult.success) {
+    console.warn("[SERVER /api/images] Invalid token:", tokenResult.error.flatten());
     return Response.json(
       { error: "Invalid API token", details: tokenResult.error.errors },
       { status: 401 },
@@ -90,7 +90,7 @@ async function handleApiImages(request: Request): Promise<Response> {
     );
     return Response.json(images);
   } catch (error) {
-    console.error("Error in /api/images:", error);
+    console.error("[SERVER ERROR] /api/images:", error.message, error.stack);
     return Response.json(
       { error: error.message || "Failed to fetch images from source" },
       { status: 500 },
@@ -101,33 +101,36 @@ async function handleApiImages(request: Request): Promise<Response> {
 async function handleProxyImage(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const imageUrl = url.searchParams.get("url");
+   console.log(`[SERVER /proxy/image] Proxying URL: ${imageUrl}`);
 
   if (!imageUrl) {
+    console.warn("[SERVER /proxy/image] Missing image URL parameter.");
     return Response.json({ error: "Missing image URL" }, { status: 400 });
   }
 
   try {
-    const response = await fetch(imageUrl); // Fetch the original image URL
+    const response = await fetch(imageUrl);
     if (!response.ok) {
+      console.warn(`[SERVER /proxy/image] Failed to fetch from source (${imageUrl}): ${response.status} ${response.statusText}`);
       throw new Error(
         `Failed to fetch image from source: ${response.status} ${response.statusText}`,
       );
     }
     const contentType = response.headers.get("content-type") || "image/jpeg";
-    // Return the image data directly
+    console.log(`[SERVER /proxy/image] Successfully proxied ${imageUrl}, Content-Type: ${contentType}`);
     return new Response(response.body, {
       status: response.status,
       headers: {
         "content-type": contentType,
-        "cache-control": "public, max-age=86400", // Cache for 1 day
-        "access-control-allow-origin": "*", // Allow CORS for the proxy
+        "cache-control": "public, max-age=86400",
+        "access-control-allow-origin": "*",
       },
     });
   } catch (error) {
-    console.error("Error proxying image:", imageUrl, error);
+    console.error("[SERVER ERROR] /proxy/image:", imageUrl, error.message, error.stack);
     return Response.json(
       { error: "Failed to proxy image", details: error.message },
-      { status: 502 }, // Bad Gateway
+      { status: 502 },
     );
   }
 }
@@ -138,90 +141,48 @@ async function fetchImagesFromChatGPT(
   after?: string,
   limit?: number,
 ): Promise<GalleryResponse> {
-  const targetUrl = new URL(
-    "https://chatgpt.com/backend-api/my/recent/image_gen",
-  );
-  targetUrl.searchParams.set(
-    "limit",
-    String(limit && limit > 0 && limit <= 1000 ? limit : 50),
-  );
+  const targetUrl = new URL("https://chatgpt.com/backend-api/my/recent/image_gen");
+  targetUrl.searchParams.set("limit", String(limit && limit > 0 && limit <= 1000 ? limit : 50));
   if (after) targetUrl.searchParams.set("after", after);
-
-  console.log(
-    `Fetching from ChatGPT API: ${targetUrl.toString()}, Team ID: ${
-      teamId || "Personal"
-    }`,
-  );
-
+  console.log(`[SERVER CHATGPT_FETCH] Fetching: ${targetUrl.toString()}, Team ID: ${teamId || "Personal"}`);
   const headers: HeadersInit = {
-    "accept": "*/*",
-    "authorization": "Bearer " + apiToken,
-    "cache-control": "no-cache",
-    "user-agent": "DenoGalleryApp/1.0 (Deno; like ChatGPT Interface User)",
+    "accept": "*/*", "authorization": "Bearer " + apiToken,
+    "cache-control": "no-cache", "user-agent": "DenoGalleryApp/1.0",
   };
-  if (teamId && teamId.trim() !== "") {
-    headers["chatgpt-account-id"] = teamId;
-  }
+  if (teamId && teamId.trim() !== "") headers["chatgpt-account-id"] = teamId;
 
   const response = await fetch(targetUrl.toString(), { headers });
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error(
-      `ChatGPT API error (${response.status}):`,
-      errorBody.slice(0, 500),
-    ); // Log snippet of error
-    if (response.status === 401) {
-      throw new Error(
-        "Invalid API token or unauthorized for the specified account.",
-      );
-    }
-    if (response.status === 403) {
-      throw new Error(
-        "Access forbidden: Ensure API token has permissions for the account.",
-      );
-    }
-    throw new Error(
-      `ChatGPT API error: ${response.status} ${response.statusText}`,
-    );
+    console.error(`[SERVER CHATGPT_FETCH] API error (${response.status}):`, errorBody.slice(0, 500));
+    if (response.status === 401) throw new Error("Invalid API token or unauthorized for the specified account.");
+    if (response.status === 403) throw new Error("Access forbidden: Ensure API token has permissions for the account.");
+    throw new Error(`ChatGPT API error: ${response.status} ${response.statusText}`);
   }
-
   const data = await response.json();
-  console.log(
-    `Retrieved ${data.items?.length || 0} image metadata items from ChatGPT.`,
-  );
-
+  console.log(`[SERVER CHATGPT_FETCH] Retrieved ${data.items?.length || 0} metadata items. Cursor: ${data.cursor}`);
   const items: ImageItem[] = (data.items || []).map((item: any) => {
     const originalFullUrl = item.url;
     const originalThumbnailPath = item.encodings?.thumbnail?.path;
     return {
       id: item.id,
       url: `/proxy/image?url=${encodeURIComponent(originalFullUrl)}`,
-      originalUrl: originalFullUrl,
-      width: item.width,
-      height: item.height,
-      title: item.title,
-      created_at: item.created_at,
+      originalUrl: originalFullUrl, width: item.width, height: item.height,
+      title: item.title, created_at: item.created_at,
       encodings: {
         thumbnail: {
-          path: originalThumbnailPath
-            ? `/proxy/image?url=${encodeURIComponent(originalThumbnailPath)}`
-            : "",
+          path: originalThumbnailPath ? `/proxy/image?url=${encodeURIComponent(originalThumbnailPath)}` : "",
           originalPath: originalThumbnailPath,
-          // blobUrl is client-side only
         },
       },
     };
   });
-
-  return {
-    items,
-    cursor: data.cursor,
-  };
+  return { items, cursor: data.cursor };
 }
 
 // --- HTML and Client-Side JavaScript ---
-function renderGalleryPage(): string {
+function renderGalleryPageHTML(): string {
   return `<!DOCTYPE html>
 <html lang="en" class="">
 <head>
@@ -251,13 +212,17 @@ function renderGalleryPage(): string {
     .sun-icon { fill: currentColor; } .moon-icon { fill: currentColor; }
     .dark .sun-icon { display: none; } .moon-icon { display: none; }
     .dark .moon-icon { display: inline-block; }
-    .gallery-image-placeholder {
-        background-color: #f0f0f0; /* Light gray placeholder */
-        display: flex; align-items: center; justify-content: center;
+    .gallery-image-container {
+        width: 100%; aspect-ratio: 3 / 4; display: flex;
+        align-items: center; justify-content: center;
+        overflow: hidden; border-radius: 0.25rem;
     }
-    .dark .gallery-image-placeholder { background-color: #374151; }
-    .gallery-image-placeholder svg { width: 30%; height: 30%; fill: #9ca3af; }
-    .dark .gallery-image-placeholder svg { fill: #6b7280; }
+    .gallery-image-container.placeholder {
+        background-color: #e5e7eb; /* Tailwind gray-200 */
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    .dark .gallery-image-container.placeholder { background-color: #374151; }
+    .gallery-image-container img { width: 100%; height: 100%; object-fit: cover; }
   </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 transition-colors duration-300">
@@ -295,10 +260,10 @@ function renderGalleryPage(): string {
           Export All as ZIP
         </button>
         <div class="flex items-center gap-2">
-          <label for="batchSizeInput" class="text-sm text-gray-700 dark:text-gray-300">Batch size:</label>
+          <label for="batchSizeInput" class="text-sm text-gray-700 dark:text-gray-300">API Batch size:</label>
           <input type="number" id="batchSizeInput" min="1" max="1000" step="1" value="50"
             class="w-24 p-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" />
-          <span class="text-xs text-gray-400 dark:text-gray-500">(1~1000)</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">(1-1000, for API metadata)</span>
         </div>
       </div>
       <div class="mb-4">
@@ -352,202 +317,247 @@ function renderGalleryPage(): string {
   </div>
 
   <script>
+    console.log("Client-side script started.");
+
     // --- Client-Side JavaScript ---
 
     // Global variables & Constants
     let currentCursor = null;
-    let isLoadingMetadata = false; // Prevents multiple metadata fetches for display
-    let hasMoreImages = true;
-    let totalImagesLoaded = 0;
+    let isLoadingMetadataGlobal = false;
+    let hasMoreImagesGlobal = true;
+    let totalImagesLoadedGlobal = 0;
     const GALLERY_THUMBNAIL_CONCURRENCY = 6;
-    const ZIP_IMAGE_CONCURRENCY = 8;
+    const ZIP_FULL_IMAGE_CONCURRENCY = 4;
 
     // DOM Elements
-    const themeToggleBtn = document.getElementById('themeToggleBtn');
-    const tokenInput = document.getElementById('tokenInput');
-    const teamIdInput = document.getElementById('teamIdInput');
-    const saveSettingsBtn = document.getElementById('saveSettings');
-    const exportZipBtn = document.getElementById('exportZipBtn');
-    const includeMetadataCheckbox = document.getElementById('includeMetadataCheckbox');
-    const exportStatusEl = document.getElementById('exportStatus');
-    const exportStatusTextEl = document.getElementById('exportStatusText');
-    const exportProgressBarEl = document.getElementById('exportProgressBar');
-    const errorMessage = document.getElementById('errorMessage');
-    const galleryEl = document.getElementById('gallery');
-    const loadingIndicator = document.getElementById('loadingIndicator');
-    const summaryStats = document.getElementById('summaryStats');
-    const totalImagesEl = document.getElementById('totalImages');
-    const modal = document.getElementById('imageModal');
-    const modalImage = document.getElementById('modalImage');
-    const modalTitle = document.getElementById('modalTitle');
-    const closeModalBtn = document.getElementById('closeModal');
-    const notification = document.getElementById('notification');
-    const downloadBtn = document.getElementById('downloadImage');
-    const batchSizeInput = document.getElementById('batchSizeInput');
+    let themeToggleBtn, tokenInput, teamIdInput, saveSettingsBtn, exportZipBtn, includeMetadataCheckbox,
+        exportStatusEl, exportStatusTextEl, exportProgressBarEl, errorMessage, galleryEl,
+        loadingIndicator, summaryStats, totalImagesEl, modal, modalImage, modalTitle,
+        closeModalBtn, notification, downloadBtn, batchSizeInput;
+
+    function assignDomElements() {
+        console.log("[DOM] Assigning DOM elements.");
+        themeToggleBtn = document.getElementById('themeToggleBtn');
+        tokenInput = document.getElementById('tokenInput');
+        teamIdInput = document.getElementById('teamIdInput');
+        saveSettingsBtn = document.getElementById('saveSettings');
+        exportZipBtn = document.getElementById('exportZipBtn');
+        includeMetadataCheckbox = document.getElementById('includeMetadataCheckbox');
+        exportStatusEl = document.getElementById('exportStatus');
+        exportStatusTextEl = document.getElementById('exportStatusText');
+        exportProgressBarEl = document.getElementById('exportProgressBar');
+        errorMessage = document.getElementById('errorMessage');
+        galleryEl = document.getElementById('gallery');
+        loadingIndicator = document.getElementById('loadingIndicator');
+        summaryStats = document.getElementById('summaryStats');
+        totalImagesEl = document.getElementById('totalImages');
+        modal = document.getElementById('imageModal');
+        modalImage = document.getElementById('modalImage');
+        modalTitle = document.getElementById('modalTitle');
+        closeModalBtn = document.getElementById('closeModal');
+        notification = document.getElementById('notification');
+        downloadBtn = document.getElementById('downloadImage');
+        batchSizeInput = document.getElementById('batchSizeInput');
+        console.log("[DOM] DOM elements assigned.");
+    }
 
     // --- Utility Functions ---
     function parseJwt(token) {
       try {
+        if (!token || typeof token !== 'string' || token.split('.').length < 2) {
+            console.warn('[UTIL] Invalid token structure or type for parsing. Token:', token); return null;
+        }
         const base64Url = token.split('.')[1];
+        if (!base64Url) { console.warn('[UTIL] Missing payload in token.'); return null; }
         const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
         const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
         return JSON.parse(jsonPayload);
-      } catch (e) { console.error('Error parsing JWT:', e); return null; }
+      } catch (e) { console.error('[UTIL] Error parsing JWT:', e, "Token snippet:", token ? String(token).slice(0, 20) + "..." : "null"); return null; }
     }
-
     function validateToken(token) {
-      if (!token || token.trim() === '') return { success: false, error: 'Token is required' };
-      if (token.trim().length < 10) return { success: false, error: 'Token is too short' };
-      const actualToken = token.startsWith('Bearer ') ? token.substring(7).trim() : token;
-      if (actualToken.includes(' ')) return { success: false, error: 'Token (after Bearer) should not contain spaces.' };
+      let result = { success: false, error: 'Token validation failed unexpectedly.' };
+      if (!token || typeof token !== 'string' || token.trim() === '') {
+        result = { success: false, error: 'Token is required and must be a string.' };
+        console.warn('[UTIL_VALIDATE_TOKEN]', result.error, "Received token:", token); return result;
+      }
+      if (token.trim().length < 10) {
+        result = { success: false, error: 'Token is too short.' };
+        console.warn('[UTIL_VALIDATE_TOKEN]', result.error); return result;
+      }
+      const actualToken = token.startsWith('Bearer ') ? token.substring(7).trim() : token.trim();
+      if (actualToken.includes(' ')) {
+        result = { success: false, error: 'Token (after Bearer) should not contain spaces.' };
+        console.warn('[UTIL_VALIDATE_TOKEN]', result.error); return result;
+      }
+      if (actualToken.length === 0) {
+        result = { success: false, error: 'Token content is missing after "Bearer " prefix.' };
+        console.warn('[UTIL_VALIDATE_TOKEN]', result.error); return result;
+      }
       try {
         const decoded = parseJwt(actualToken);
-        if (decoded && decoded.exp && (decoded.exp * 1000 < Date.now())) {
-          return { success: false, error: 'Token has expired. Please get a new one.' };
+        if (decoded && decoded.exp) {
+          const expirationTime = decoded.exp * 1000; const currentTime = Date.now();
+          if (currentTime >= expirationTime) {
+            result = { success: false, error: 'Token has expired. Please get a new one.' };
+            console.warn('[UTIL_VALIDATE_TOKEN]', result.error); return result;
+          }
+        } else if (decoded === null && actualToken.length > 10) {
+            console.warn('[UTIL_VALIDATE_TOKEN] Token could not be decoded as JWT. Assuming opaque token, proceeding.');
+            result = { success: true, data: actualToken }; return result;
+        } else if (decoded === null) {
+            result = { success: false, error: 'Token is not a valid JWT structure.' };
+            console.warn('[UTIL_VALIDATE_TOKEN]', result.error); return result;
         }
-      } catch (e) { console.warn('Could not check token expiration:', e); }
-      return { success: true, data: actualToken };
+        result = { success: true, data: actualToken };
+        console.log('[UTIL_VALIDATE_TOKEN] Token appears valid for client-side checks.'); return result;
+      } catch (e) {
+        console.error('[UTIL_VALIDATE_TOKEN] Unexpected error during token validation:', e);
+        result = { success: false, error: 'Unexpected error during token validation.' }; return result;
+      }
     }
-
     function formatDate(timestamp) {
       const date = new Date(timestamp * 1000);
       return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
-
-    function getBatchSize() {
+    function getApiBatchSize() {
       let size = parseInt(localStorage.getItem('chatgpt_batch_size') || '50', 10);
       return Math.max(1, Math.min(1000, isNaN(size) ? 50 : size));
     }
-
-    function setBatchSize(size) {
+    function setApiBatchSize(size) {
       size = Math.max(1, Math.min(1000, parseInt(size, 10) || 50));
       localStorage.setItem('chatgpt_batch_size', size.toString());
-      batchSizeInput.value = size.toString();
+      if(batchSizeInput) batchSizeInput.value = size.toString(); else console.error("batchSizeInput is null in setApiBatchSize");
     }
-    function initBatchSizeInput() {
-      batchSizeInput.value = getBatchSize().toString();
-      batchSizeInput.addEventListener('change', () => setBatchSize(batchSizeInput.value));
+    function initApiBatchSizeInput() {
+      if(batchSizeInput) {
+        batchSizeInput.value = getApiBatchSize().toString();
+        batchSizeInput.addEventListener('change', () => setApiBatchSize(batchSizeInput.value));
+      } else {
+        console.error("batchSizeInput is null in initApiBatchSizeInput");
+      }
     }
 
     // --- Theme Management ---
-    function applyTheme(theme) {
-      document.documentElement.classList.toggle('dark', theme === 'dark');
-    }
+    function applyTheme(theme) { document.documentElement.classList.toggle('dark', theme === 'dark'); }
     function toggleTheme() {
       const newTheme = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
-      localStorage.setItem('chatgpt_gallery_theme', newTheme);
-      applyTheme(newTheme);
+      localStorage.setItem('chatgpt_gallery_theme', newTheme); applyTheme(newTheme);
     }
     function loadTheme() {
-      applyTheme(localStorage.getItem('chatgpt_gallery_theme') || 'light');
+      const savedTheme = localStorage.getItem('chatgpt_gallery_theme');
+      if (savedTheme) {
+        console.log(\`[THEME] Loading saved theme: \${savedTheme}\`); applyTheme(savedTheme);
+      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        console.log("[THEME] No saved theme, defaulting to system preferred: dark"); applyTheme('dark');
+      } else {
+        console.log("[THEME] No saved theme, defaulting to system preferred: light"); applyTheme('light');
+      }
     }
 
     // --- UI Feedback ---
-    function showError(message) {
-      errorMessage.textContent = message;
-      errorMessage.classList.remove('hidden');
-    }
-    function hideError() { errorMessage.classList.add('hidden'); }
+    function showError(message) { console.error('[UI ERROR]', message); if(errorMessage) {errorMessage.textContent = message; errorMessage.classList.remove('hidden');} else console.error("errorMessage element is null"); }
+    function hideError() { if(errorMessage) errorMessage.classList.add('hidden'); }
     function showNotification(message = "Settings saved successfully!") {
-      notification.textContent = message;
-      notification.classList.remove('translate-x-full');
-      notification.classList.add('translate-x-0');
-      setTimeout(() => {
-        notification.classList.add('translate-x-full');
-        notification.classList.remove('translate-x-0');
-      }, 3000);
+      if(notification) {
+        notification.textContent = message;
+        notification.classList.remove('translate-x-full'); notification.classList.add('translate-x-0');
+        setTimeout(() => { notification.classList.add('translate-x-full'); notification.classList.remove('translate-x-0'); }, 3000);
+      } else console.error("notification element is null");
     }
 
     // --- Gallery Loading Logic ---
-    async function fetchAllImagesForDisplay() {
-      console.log('Starting to fetch all images for display');
+    async function fetchAndDisplayGalleryImages() {
+      console.log('[GALLERY] Starting full image display process.');
       const apiToken = localStorage.getItem('chatgpt_api_token');
       if (!apiToken) {
-        galleryEl.innerHTML = '<div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">Enter your API token to view your images</div>';
-        loadingIndicator.classList.add('hidden');
-        return;
+        if(galleryEl) galleryEl.innerHTML = '<div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">Enter your API token to view your images</div>';
+        if(loadingIndicator) loadingIndicator.classList.add('hidden'); return;
       }
-      galleryEl.innerHTML = '';
-      totalImagesLoaded = 0;
-      currentCursor = null;
-      hasMoreImages = true;
-      loadingIndicator.classList.remove('hidden');
-      loadingIndicator.querySelector('p').textContent = 'Loading images...';
-      summaryStats.classList.add('hidden');
-      initBatchSizeInput();
+      if(galleryEl) galleryEl.innerHTML = ''; totalImagesLoadedGlobal = 0; currentCursor = null; hasMoreImagesGlobal = true;
+      if(loadingIndicator) {
+        loadingIndicator.classList.remove('hidden');
+        loadingIndicator.querySelector('p').textContent = 'Loading images...';
+      }
+      if(summaryStats) summaryStats.classList.add('hidden');
+      initApiBatchSizeInput();
 
-      while (hasMoreImages && !isLoadingMetadata) {
-        isLoadingMetadata = true;
-        await fetchMetadataBatchAndThumbnails();
-        isLoadingMetadata = false;
-        totalImagesEl.textContent = totalImagesLoaded.toString();
-        if (!hasMoreImages) {
-            loadingIndicator.querySelector('p').textContent = totalImagesLoaded > 0 ? 'All images loaded.' : 'No images found.';
-            setTimeout(() => loadingIndicator.classList.add('hidden'), totalImagesLoaded > 0 ? 2000 : 4000);
+      while (hasMoreImagesGlobal) {
+        if (isLoadingMetadataGlobal) {
+          console.log('[GALLERY] Metadata fetch already in progress. Waiting...');
+          await new Promise(resolve => setTimeout(resolve, 300)); continue;
         }
+        isLoadingMetadataGlobal = true;
+        console.log('[GALLERY] Fetching next metadata batch. Cursor:', currentCursor);
+        const metadataBatch = await fetchSingleMetadataBatch(apiToken, currentCursor);
+        if (metadataBatch) {
+          currentCursor = metadataBatch.cursor || null;
+          hasMoreImagesGlobal = !!currentCursor;
+          if (metadataBatch.items && metadataBatch.items.length > 0) {
+            console.log(\`[GALLERY] Fetched \${metadataBatch.items.length} metadata items. Rendering skeletons and fetching thumbnails...\`);
+            renderSkeletons(metadataBatch.items);
+            const itemsWithThumbnails = await fetchThumbnailsForItems(metadataBatch.items);
+            updateSkeletonsWithImages(itemsWithThumbnails);
+            totalImagesLoadedGlobal += itemsWithThumbnails.length;
+          } else if (!currentCursor) { hasMoreImagesGlobal = false; console.log('[GALLERY] No items and no next cursor.'); }
+          else { console.log('[GALLERY] No items in this batch, but there is a next cursor.'); }
+        } else { hasMoreImagesGlobal = false; console.log('[GALLERY] fetchSingleMetadataBatch returned null (error).'); }
+        isLoadingMetadataGlobal = false;
+        if(totalImagesEl) totalImagesEl.textContent = totalImagesLoadedGlobal.toString();
       }
-      if (totalImagesLoaded > 0) summaryStats.classList.remove('hidden');
-      if (!hasMoreImages && totalImagesLoaded === 0) {
-        galleryEl.innerHTML = '<div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">No images found for the current settings.</div>';
+      if(loadingIndicator) loadingIndicator.classList.add('hidden');
+      if (totalImagesLoadedGlobal > 0) {
+        if(summaryStats) summaryStats.classList.remove('hidden'); console.log(\`[GALLERY] All images loaded. Total: \${totalImagesLoadedGlobal}\`);
+      } else {
+        if(galleryEl) galleryEl.innerHTML = '<div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">No images found.</div>';
+        console.log('[GALLERY] No images found after loading.');
       }
     }
 
-    async function fetchMetadataBatchAndThumbnails() {
-      const apiToken = localStorage.getItem('chatgpt_api_token');
+    async function fetchSingleMetadataBatch(apiToken, cursor) {
       const teamId = localStorage.getItem('chatgpt_team_id');
-      if (!apiToken) { showError('No API token found.'); hasMoreImages = false; return; }
-
       try {
-        const metadataBatchSize = getBatchSize();
+        const metadataApiBatchSize = getApiBatchSize();
         const url = new URL('/api/images', window.location.origin);
-        if (currentCursor) url.searchParams.set('after', currentCursor);
-        url.searchParams.set('limit', metadataBatchSize.toString());
-
+        if (cursor) url.searchParams.set('after', cursor);
+        url.searchParams.set('limit', metadataApiBatchSize.toString());
         const headers = { 'x-api-token': apiToken };
         if (teamId && teamId.trim() !== "") headers['x-team-id'] = teamId;
-
+        console.log('[METADATA_FETCH] Requesting:', url.toString());
         const response = await fetch(url.toString(), { headers });
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Unknown API error' }));
-          throw new Error(errorData.error || \`API Error: \${response.status}\`);
+          const errorData = await response.json().catch(() => ({ error: 'Unknown API error during metadata fetch' }));
+          throw new Error(errorData.error || \`API Error (Metadata): \${response.status}\`);
         }
-        const metadataResult = await response.json(); // Type: GalleryResponse
-
-        currentCursor = metadataResult.cursor || null;
-        hasMoreImages = !!currentCursor && metadataResult.items && metadataResult.items.length > 0;
-
-        if (metadataResult.items && metadataResult.items.length > 0) {
-          const itemsWithThumbnails = await fetchThumbnailsForItems(metadataResult.items);
-          displayImages(itemsWithThumbnails);
-          totalImagesLoaded += itemsWithThumbnails.length;
-        } else if (!currentCursor) { // No items and no cursor means no more images at all
-            hasMoreImages = false;
-        }
+        const metadataResult = await response.json();
+        console.log(\`[METADATA_FETCH] Received: \${metadataResult.items?.length || 0} items, Cursor: \${metadataResult.cursor}\`);
+        return metadataResult;
       } catch (error) {
-        console.error('Error fetching image batch or thumbnails:', error);
-        showError(error.message || 'Error loading images.');
-        hasMoreImages = false;
+        console.error('[METADATA_FETCH] Error:', error);
+        showError(error.message || 'Error loading image metadata.'); return null;
       }
     }
 
-    async function fetchThumbnailsForItems(items) { // items: ImageItem[]
+    async function fetchThumbnailsForItems(items) {
+      console.log(\`[THUMBNAILS] Processing \${items.length} items for thumbnails.\`);
       const itemsToProcess = items.filter(item => item.encodings.thumbnail.path);
-      const processedItems = [];
-      const itemMap = new Map(items.map(item => [item.id, item])); // For easy update
-
+      if(itemsToProcess.length === 0 && items.length > 0) {
+        console.log("[THUMBNAILS] No items with valid thumbnail paths in this batch."); return items;
+      }
+      const itemMap = new Map(items.map(item => [item.id, item]));
       for (let i = 0; i < itemsToProcess.length; i += GALLERY_THUMBNAIL_CONCURRENCY) {
         const chunk = itemsToProcess.slice(i, i + GALLERY_THUMBNAIL_CONCURRENCY);
+        console.log(\`[THUMBNAILS] Fetching thumbnail chunk: \${i + 1} to \${i + chunk.length}\`);
         const thumbnailPromises = chunk.map(async (item) => {
           try {
             const response = await fetch(item.encodings.thumbnail.path);
             if (!response.ok) {
-              console.warn(\`Failed thumbnail fetch for \${item.id}: \${response.status}\`);
+              console.warn(\`[THUMBNAILS] Failed fetch for \${item.id} (\${item.title?.slice(0,20)}): \${response.status}\`);
               return { id: item.id, blobUrl: null, success: false };
             }
             const blob = await response.blob();
             return { id: item.id, blobUrl: URL.createObjectURL(blob), success: true };
           } catch (e) {
-            console.warn(\`Error fetching thumbnail for \${item.id}:\`, e);
+            console.warn(\`[THUMBNAILS] Error fetching for \${item.id} (\${item.title?.slice(0,20)}):\`, e);
             return { id: item.id, blobUrl: null, success: false };
           }
         });
@@ -555,83 +565,112 @@ function renderGalleryPage(): string {
         settledResults.forEach(result => {
           if (result.status === 'fulfilled' && result.value.success) {
             const originalItem = itemMap.get(result.value.id);
-            if (originalItem) {
-              originalItem.encodings.thumbnail.blobUrl = result.value.blobUrl;
-            }
+            if (originalItem) originalItem.encodings.thumbnail.blobUrl = result.value.blobUrl;
+          } else if (result.status === 'fulfilled' && !result.value.success) {
+             console.log(\`[THUMBNAILS] Fulfilled but failed for ID: \${result.value.id}\`);
+          } else if (result.status === 'rejected') {
+             console.error('[THUMBNAILS] Promise rejected:', result.reason);
           }
         });
       }
-      return items; // Return original items array, now potentially with blobUrls
+      return Array.from(itemMap.values());
     }
 
-    function displayImages(images) { // images: ImageItem[]
-      images.forEach(image => {
-        const itemEl = document.createElement('div');
-        itemEl.className = 'bg-white dark:bg-gray-800 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-all hover:-translate-y-1';
-        const imgContainer = document.createElement('div');
-        imgContainer.className = 'w-full aspect-[3/4] object-cover cursor-pointer gallery-image-placeholder';
-        const img = document.createElement('img');
-        img.className = 'w-full h-full object-cover hidden';
-        img.alt = image.title || 'Untitled image';
-        img.dataset.fullImage = image.url;
-        img.dataset.title = image.title || 'Untitled image';
-        img.loading = 'lazy';
+    function renderSkeletons(items) {
+        if(!galleryEl) { console.error("[SKELETON] galleryEl is null!"); return; }
+        console.log(\`[SKELETON] Rendering \${items.length} skeletons.\`);
+        items.forEach(image => {
+            const itemEl = document.createElement('div');
+            itemEl.className = 'bg-white dark:bg-gray-800 rounded-lg overflow-hidden shadow-md';
+            itemEl.id = \`gallery-item-\${image.id}\`;
 
-        const placeholderSvg = \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 3H3C1.89543 3 1 3.89543 1 5V19C1 20.1046 1.89543 21 3 21H21C22.1046 21 23 20.1046 23 19V5C23 3.89543 22.1046 3 21 3ZM3 4.5H21C21.2761 4.5 21.5 4.72386 21.5 5V15.0858L18.2071 11.7929C17.8166 11.4024 17.1834 11.4024 16.7929 11.7929L13.5 15.0858L9.70711 11.2929C9.31658 10.9024 8.68342 10.9024 8.29289 11.2929L2.5 17.0858V5C2.5 4.72386 2.72386 4.5 3 4.5ZM16 8C16 8.55228 15.5523 9 15 9C14.4477 9 14 8.55228 14 8C14 7.44772 14.4477 7 15 7C15.5523 7 16 7.44772 16 8Z"/></svg>\`;
+            const imgContainer = document.createElement('div');
+            imgContainer.className = 'gallery-image-container placeholder cursor-pointer';
 
-        if (image.encodings.thumbnail.blobUrl) {
-          img.src = image.encodings.thumbnail.blobUrl;
-        } else if (image.encodings.thumbnail.path) { // Fallback to direct path if blob not ready/failed
-          img.src = image.encodings.thumbnail.path;
-        } else { // No thumbnail path at all
-          imgContainer.innerHTML = placeholderSvg;
-        }
+            const info = document.createElement('div');
+            info.className = 'p-4';
+            const titleEl = document.createElement('h3');
+            titleEl.className = 'font-medium text-gray-800 dark:text-gray-200 mb-1 truncate h-6 bg-gray-200 dark:bg-gray-700 rounded animate-pulse';
+            titleEl.textContent = '\u00A0';
+            const dateEl = document.createElement('p');
+            dateEl.className = 'text-sm text-gray-500 dark:text-gray-400 h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mt-1';
+            dateEl.textContent = '\u00A0';
 
-        img.onload = () => {
-          img.classList.remove('hidden');
-          imgContainer.classList.remove('gallery-image-placeholder');
-          imgContainer.innerHTML = '';
-          imgContainer.appendChild(img);
-        };
-        img.onerror = () => {
-          console.warn(\`Failed to load thumbnail: \${img.src} for \${image.title || image.id}\`);
-          if (img.src !== image.url) { // If thumbnail failed, try full image
-            img.src = image.url;
-          } else { // Full image also failed
-            img.classList.add('hidden');
-            if (!imgContainer.querySelector('svg')) imgContainer.innerHTML = placeholderSvg;
-            imgContainer.classList.add('gallery-image-placeholder');
-          }
-        };
-        if (img.src) imgContainer.appendChild(img); // Add if src is set
+            info.appendChild(titleEl); info.appendChild(dateEl);
+            itemEl.appendChild(imgContainer); itemEl.appendChild(info);
+            galleryEl.appendChild(itemEl);
+        });
+    }
 
-        const info = document.createElement('div');
-        info.className = 'p-4';
-        const titleEl = document.createElement('h3');
-        titleEl.className = 'font-medium text-gray-800 dark:text-gray-200 mb-1 truncate';
-        titleEl.textContent = image.title || 'Untitled image';
-        const dateEl = document.createElement('p');
-        dateEl.className = 'text-sm text-gray-500 dark:text-gray-400';
-        dateEl.textContent = formatDate(image.created_at);
-        info.appendChild(titleEl); info.appendChild(dateEl);
-        itemEl.appendChild(imgContainer); itemEl.appendChild(info);
-        galleryEl.appendChild(itemEl);
-        imgContainer.addEventListener('click', () => openModal(image.url, image.title || 'Untitled image'));
-      });
+    function updateSkeletonsWithImages(images) {
+        console.log(\`[UPDATE_SKELETON] Updating \${images.length} items with actual images.\`);
+        images.forEach(image => {
+            const itemEl = document.getElementById(\`gallery-item-\${image.id}\`);
+            if (!itemEl) {
+                console.warn(\`[UPDATE_SKELETON] Could not find skeleton for item ID: \${image.id}\`);
+                return;
+            }
+            const imgContainer = itemEl.querySelector('.gallery-image-container');
+            const titleEl = itemEl.querySelector('h3');
+            const dateEl = itemEl.querySelector('p');
+
+            if (titleEl) {
+                titleEl.textContent = image.title || 'Untitled image';
+                titleEl.classList.remove('h-6', 'bg-gray-200', 'dark:bg-gray-700', 'animate-pulse');
+            }
+            if (dateEl) {
+                dateEl.textContent = formatDate(image.created_at);
+                dateEl.classList.remove('h-4', 'bg-gray-200', 'dark:bg-gray-700', 'animate-pulse', 'mt-1');
+            }
+
+            if (imgContainer) {
+                imgContainer.innerHTML = '';
+                imgContainer.classList.remove('placeholder');
+
+                const img = document.createElement('img');
+                img.alt = image.title || 'Untitled image';
+                img.dataset.fullImage = image.url;
+                img.dataset.title = image.title || 'Untitled image';
+                img.loading = 'lazy';
+
+                let imgSrcSet = false;
+                if (image.encodings.thumbnail.blobUrl) {
+                    img.src = image.encodings.thumbnail.blobUrl;
+                    imgSrcSet = true;
+                } else if (image.encodings.thumbnail.path) {
+                    img.src = image.encodings.thumbnail.path;
+                    imgSrcSet = true;
+                }
+
+                if (imgSrcSet) {
+                    img.onload = () => { /* Image loaded successfully */ };
+                    img.onerror = () => {
+                      console.warn(\`[UPDATE_SKELETON] Error loading image: \${img.src.slice(0,100)} for \${image.title || image.id}\`);
+                      if (img.src !== image.url && image.url) {
+                        img.src = image.url; // Try full image
+                      } else {
+                        imgContainer.innerHTML = ''; // Clear broken img
+                        imgContainer.classList.add('placeholder'); // Re-add placeholder style
+                      }
+                    };
+                    imgContainer.appendChild(img);
+                } else {
+                    imgContainer.classList.add('placeholder');
+                }
+                imgContainer.addEventListener('click', () => openModal(image.url, image.title || 'Untitled image'));
+            }
+        });
     }
 
     // --- Modal Logic ---
     function openModal(imageSrc, imageTitle) {
-      modalImage.src = imageSrc;
-      modalImage.alt = imageTitle;
-      modalTitle.textContent = imageTitle;
-      modal.classList.remove('hidden');
-      modal.classList.add('flex');
+      if(modalImage) { modalImage.src = imageSrc; modalImage.alt = imageTitle; }
+      if(modalTitle) modalTitle.textContent = imageTitle;
+      if(modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
     }
     function closeModal() {
-      modal.classList.add('hidden');
-      modal.classList.remove('flex');
-      modalImage.src = ""; // Clear src to stop loading if any
+      if(modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+      if(modalImage) modalImage.src = "";
     }
 
     // --- ZIP Export Logic ---
@@ -652,83 +691,75 @@ function renderGalleryPage(): string {
       if (contentType.includes('gif')) return 'gif'; if (contentType.includes('webp')) return 'webp';
       const parts = contentType.split('/'); return parts.length > 1 ? parts[1].split(';')[0].trim() : 'jpg';
     }
-
     async function handleExportAllAsZip() {
       const apiToken = localStorage.getItem('chatgpt_api_token');
       if (!apiToken) { showError('API Token is required for export.'); return; }
       if (!window.JSZip) { showError('JSZip library not loaded.'); return; }
-
-      exportZipBtn.disabled = true;
-      exportStatusEl.classList.remove('hidden');
+      if(!exportZipBtn || !exportStatusEl || !exportStatusTextEl || !exportProgressBarEl) {
+        console.error("[ZIP] Export UI elements not found!"); return;
+      }
+      exportZipBtn.disabled = true; exportStatusEl.classList.remove('hidden');
       exportStatusTextEl.textContent = 'Starting export: Fetching all image metadata...';
       exportProgressBarEl.style.width = '0%';
-
-      const allImageMetadata = [];
-      let tempCursor = null;
-      let moreMetaToFetch = true;
-      let metaBatchesFetched = 0;
-      const metaBatchSize = 100; // Larger batch for metadata collection
+      const allImageMetadata = []; let tempCursor = null; let moreMetaToFetch = true;
+      let metaBatchesFetched = 0; const metadataCollectionApiBatchSize = Math.max(getApiBatchSize(), 100);
       let baseZipProgress = 0;
-
       try {
-        // 1. Collect ALL image metadata first
+        console.log('[ZIP] Starting metadata collection.');
         while (moreMetaToFetch) {
           metaBatchesFetched++;
           exportStatusTextEl.textContent = \`Fetching image metadata (Batch \${metaBatchesFetched})...\`;
           const teamId = localStorage.getItem('chatgpt_team_id');
           const url = new URL('/api/images', window.location.origin);
           if (tempCursor) url.searchParams.set('after', tempCursor);
-          url.searchParams.set('limit', metaBatchSize.toString());
+          url.searchParams.set('limit', metadataCollectionApiBatchSize.toString());
           const headers = { 'x-api-token': apiToken };
           if (teamId && teamId.trim() !== "") headers['x-team-id'] = teamId;
-
           const response = await fetch(url.toString(), { headers });
-          if (!response.ok) throw new Error(\`Metadata fetch error: \${response.status}\`);
-          const data = await response.json(); // GalleryResponse
-          if (data.items && data.items.length > 0) allImageMetadata.push(...data.items);
-          tempCursor = data.cursor;
-          moreMetaToFetch = !!tempCursor && data.items && data.items.length > 0;
-          baseZipProgress = Math.min(10, metaBatchesFetched); // Max 10% for metadata phase
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({error: \`Metadata fetch HTTP error: \${response.status}\`}));
+            throw new Error(errorData.error || \`Metadata fetch error: \${response.status}\`);
+          }
+          const data = await response.json();
+          if (data.items && data.items.length > 0) {
+            allImageMetadata.push(...data.items);
+            console.log(\`[ZIP] Fetched \${data.items.length} metadata items. Total now: \${allImageMetadata.length}\`);
+          }
+          tempCursor = data.cursor; moreMetaToFetch = !!tempCursor;
+          baseZipProgress = Math.min(10, metaBatchesFetched);
           exportProgressBarEl.style.width = \`\${baseZipProgress * 10}%\`;
         }
-
+        console.log(\`[ZIP] Metadata collection complete. Total items: \${allImageMetadata.length}\`);
         if (allImageMetadata.length === 0) {
           exportStatusTextEl.textContent = 'No images found to export.';
           exportProgressBarEl.style.width = '100%';
-          setTimeout(() => exportStatusEl.classList.add('hidden'), 3000);
-          return;
+          setTimeout(() => exportStatusEl.classList.add('hidden'), 3000); exportZipBtn.disabled = false; return;
         }
         exportStatusTextEl.textContent = \`Found \${allImageMetadata.length} images. Preparing to ZIP...\`;
-        
         const zip = new JSZip();
-        if (includeMetadataCheckbox.checked) {
+        if (includeMetadataCheckbox && includeMetadataCheckbox.checked) {
           exportStatusTextEl.textContent = 'Adding metadata.json...';
           const metadataToExport = allImageMetadata.map(item => ({
-            id: item.id, title: item.title, created_at: item.created_at,
-            width: item.width, height: item.height,
-            original_url: item.originalUrl,
-            original_thumbnail_url: item.encodings.thumbnail.originalPath
+            id: item.id, title: item.title, created_at: item.created_at, width: item.width, height: item.height,
+            original_url: item.originalUrl, original_thumbnail_url: item.encodings.thumbnail.originalPath
           }));
           zip.file("metadata.json", JSON.stringify(metadataToExport, null, 2));
-          baseZipProgress = 15;
-          exportProgressBarEl.style.width = \`\${baseZipProgress}%\`;
-        } else {
-          baseZipProgress = 10;
-          exportProgressBarEl.style.width = \`\${baseZipProgress}%\`;
-        }
+          baseZipProgress = 15; exportProgressBarEl.style.width = \`\${baseZipProgress}%\`; console.log('[ZIP] Added metadata.json.');
+        } else { baseZipProgress = 10; exportProgressBarEl.style.width = \`\${baseZipProgress}%\`; }
 
-        // 2. Fetch image blobs concurrently and add to ZIP
-        let imagesProcessedForZip = 0;
-        let successfulImageDownloads = 0;
-
-        for (let i = 0; i < allImageMetadata.length; i += ZIP_IMAGE_CONCURRENCY) {
-          const chunk = allImageMetadata.slice(i, i + ZIP_IMAGE_CONCURRENCY);
-          exportStatusTextEl.textContent = \`Downloading images \${i + 1}-\${Math.min(i + ZIP_IMAGE_CONCURRENCY, allImageMetadata.length)} of \${allImageMetadata.length}...\`;
-
+        let imagesProcessedForZip = 0; let successfulImageDownloads = 0;
+        console.log(\`[ZIP] Starting image blob download with concurrency: \${ZIP_FULL_IMAGE_CONCURRENCY}\`);
+        for (let i = 0; i < allImageMetadata.length; i += ZIP_FULL_IMAGE_CONCURRENCY) {
+          const chunk = allImageMetadata.slice(i, i + ZIP_FULL_IMAGE_CONCURRENCY);
+          exportStatusTextEl.textContent = \`Downloading images \${i + 1}-\${Math.min(i + ZIP_FULL_IMAGE_CONCURRENCY, allImageMetadata.length)} of \${allImageMetadata.length}...\`;
+          console.log(\`[ZIP] Processing chunk: \${i + 1} to \${i + chunk.length}\`);
           const imageFetchPromises = chunk.map(async (imageItem) => {
             try {
-              const imageResponse = await fetch(imageItem.url); // Uses proxied URL
-              if (!imageResponse.ok) return { success: false, item: imageItem, errorStatus: imageResponse.status };
+              const imageResponse = await fetch(imageItem.url);
+              if (!imageResponse.ok) {
+                console.warn(\`[ZIP] Failed to fetch blob for \${imageItem.id} (\${imageItem.title?.slice(0,20)}): \${imageResponse.status}\`);
+                return { success: false, item: imageItem, errorStatus: imageResponse.status };
+              }
               const blob = await imageResponse.blob();
               const contentType = imageResponse.headers.get('content-type');
               const extension = getExtensionFromContentType(contentType);
@@ -736,131 +767,146 @@ function renderGalleryPage(): string {
               const titlePart = sanitizeFilename(imageItem.title);
               const filename = \`images/\${datePrefix}_\${titlePart}.\${extension}\`;
               return { success: true, filename, blob, item: imageItem };
-            } catch (e) { return { success: false, item: imageItem, error: e }; }
+            } catch (e) {
+              console.error(\`[ZIP] Error fetching blob for \${imageItem.id} (\${imageItem.title?.slice(0,20)}):\`, e);
+              if (e.name === 'RangeError' || e.message.toLowerCase().includes('allocation failed')) {
+                 console.error("[ZIP] Potential memory allocation error during fetch for item:", imageItem.id);
+              }
+              return { success: false, item: imageItem, error: e };
+            }
           });
-
           const chunkResults = await Promise.allSettled(imageFetchPromises);
-          chunkResults.forEach(result => {
+          for (const result of chunkResults) {
             imagesProcessedForZip++;
             const overallProgress = baseZipProgress + ((imagesProcessedForZip / allImageMetadata.length) * (100 - baseZipProgress));
             exportProgressBarEl.style.width = \`\${Math.round(overallProgress)}%\`;
             if (result.status === 'fulfilled' && result.value.success) {
-              zip.file(result.value.filename, result.value.blob);
-              successfulImageDownloads++;
+              zip.file(result.value.filename, result.value.blob); successfulImageDownloads++;
             } else {
               const title = result.status === 'fulfilled' ? result.value.item.title : (result.reason?.item?.title || "Unknown");
-              console.warn(\`Skipped zipping: \${title}. Reason:\`, result.status === 'rejected' ? result.reason : result.value);
+              const reason = result.status === 'rejected' ? result.reason : (result.value.errorStatus || result.value.error);
+              console.warn(\`[ZIP] Skipped zipping: \${title}. Reason:\`, reason);
             }
-          });
+          }
+          console.log(\`[ZIP] Chunk processed. Total processed for zip: \${imagesProcessedForZip}\`);
           exportStatusTextEl.textContent = \`Processed \${imagesProcessedForZip} of \${allImageMetadata.length} images for zipping...\`;
         }
-        
         if (successfulImageDownloads === 0 && allImageMetadata.length > 0) {
-            throw new Error("No images could be successfully downloaded for the ZIP.");
+            throw new Error("No images could be successfully downloaded for the ZIP. Check console for errors.");
         }
-
-        // 3. Generate and download ZIP
-        exportStatusTextEl.textContent = 'Generating ZIP file... Please wait.';
-        exportProgressBarEl.style.width = '100%';
+        exportStatusTextEl.textContent = 'Generating ZIP file... This may take a while for many images.';
+        console.log('[ZIP] Generating ZIP file...'); exportProgressBarEl.style.width = '100%';
         const zipContent = await zip.generateAsync({ type: "blob" });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(zipContent);
+        console.log('[ZIP] ZIP generation complete.');
+        const link = document.createElement('a'); link.href = URL.createObjectURL(zipContent);
         const workspaceName = localStorage.getItem('chatgpt_team_id') ? 'team' : 'personal';
         link.download = \`chatgpt_images_\${workspaceName}_\${formatDateForFilename(Date.now()/1000)}.zip\`;
         document.body.appendChild(link); link.click(); document.body.removeChild(link);
         URL.revokeObjectURL(link.href);
-        exportStatusTextEl.textContent = 'Export complete! ZIP file downloaded.';
-
+        exportStatusTextEl.textContent = 'Export complete! ZIP file downloaded.'; console.log('[ZIP] Export complete.');
       } catch (error) {
-        console.error('Error during ZIP export:', error);
-        showError(\`Export failed: \${error.message}\`);
-        exportStatusTextEl.textContent = \`Export failed: \${error.message}\`;
+        console.error('[ZIP] Error during ZIP export:', error);
+        let userMessage = \`Export failed: \${error.message}\`;
+        if (error.message && error.message.toLowerCase().includes('allocation failed')) {
+            userMessage += " This often means the browser ran out of memory. Try reducing the 'API Batch size' (which also affects ZIP image downloads) or export fewer images if possible.";
+        }
+        showError(userMessage); exportStatusTextEl.textContent = userMessage;
       } finally {
-        exportZipBtn.disabled = false;
+        if(exportZipBtn) exportZipBtn.disabled = false;
         setTimeout(() => {
-          exportStatusEl.classList.add('hidden');
-          exportProgressBarEl.style.width = '0%';
-        }, 7000);
+          if(exportStatusEl) exportStatusEl.classList.add('hidden');
+          if(exportProgressBarEl) exportProgressBarEl.style.width = '0%';
+        }, 10000);
       }
     }
 
     // --- Initialization and Event Listeners ---
     function init() {
+      console.log("[INIT] DOMContentLoaded or script directly executed.");
+      assignDomElements();
       loadTheme();
-      console.log('Initializing app...');
+      console.log('[INIT] Initializing app...');
       const storedToken = localStorage.getItem('chatgpt_api_token');
       const storedTeamId = localStorage.getItem('chatgpt_team_id');
       const storedIncludeMeta = localStorage.getItem('chatgpt_include_metadata');
 
       if (storedToken) {
-        tokenInput.value = storedToken;
-        if (storedTeamId) teamIdInput.value = storedTeamId;
-        if (storedIncludeMeta !== null) includeMetadataCheckbox.checked = storedIncludeMeta === 'true';
+        console.log('[INIT] Found stored token.');
+        if(tokenInput) tokenInput.value = storedToken;
+        if(teamIdInput && storedTeamId) teamIdInput.value = storedTeamId;
+        if(includeMetadataCheckbox && storedIncludeMeta !== null) includeMetadataCheckbox.checked = storedIncludeMeta === 'true';
         
-        const validation = validateToken(storedToken); // Validate on load
-        if (!validation.success && validation.error.includes("expired")) {
+        const validation = validateToken(storedToken);
+        console.log('[INIT] Token validation result:', validation);
+        if (!validation) {
+            console.error("[INIT] CRITICAL: validateToken returned undefined or null!");
+            showError("Internal error: Token validation failed to produce a result.");
+            if(loadingIndicator) loadingIndicator.classList.add('hidden'); return;
+        }
+        if (!validation.success && validation.error && validation.error.includes("expired")) {
             showError(validation.error);
-            loadingIndicator.classList.add('hidden');
+            if(loadingIndicator) loadingIndicator.classList.add('hidden');
+            console.log('[INIT] Token expired.');
         } else if (validation.success) {
-            setTimeout(fetchAllImagesForDisplay, 100);
-        } else { // Other validation error
+            console.log('[INIT] Token valid. Starting image fetch.');
+            fetchAndDisplayGalleryImages();
+        } else {
             showError(validation.error || "Invalid stored token.");
-            loadingIndicator.classList.add('hidden');
+            if(loadingIndicator) loadingIndicator.classList.add('hidden');
+            console.log('[INIT] Invalid token based on client-side checks:', validation.error);
         }
       } else {
-        galleryEl.innerHTML = '<div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">Enter API token to view images.</div>';
-        loadingIndicator.classList.add('hidden');
+        console.log('[INIT] No token found.');
+        if(galleryEl) galleryEl.innerHTML = '<div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">Enter API token to view images.</div>';
+        if(loadingIndicator) loadingIndicator.classList.add('hidden');
       }
-      initBatchSizeInput();
+      initApiBatchSizeInput();
 
-      themeToggleBtn.addEventListener('click', toggleTheme);
-      saveSettingsBtn.addEventListener('click', () => {
-        hideError();
-        const rawToken = tokenInput.value.trim();
-        const newTeamId = teamIdInput.value.trim();
+      if(themeToggleBtn) themeToggleBtn.addEventListener('click', toggleTheme); else console.error("[INIT] themeToggleBtn not found");
+      if(saveSettingsBtn) saveSettingsBtn.addEventListener('click', () => {
+        console.log('[EVENT] Save Settings clicked.'); hideError();
+        const rawToken = tokenInput.value.trim(); const newTeamId = teamIdInput.value.trim();
         const validationResult = validateToken(rawToken);
-
+        console.log('[EVENT] Save Settings - Token validation result:', validationResult);
         if (!validationResult.success) { showError(validationResult.error); return; }
-        
-        localStorage.setItem('chatgpt_api_token', validationResult.data); // Save actual token
-        if (newTeamId) localStorage.setItem('chatgpt_team_id', newTeamId);
-        else localStorage.removeItem('chatgpt_team_id');
-        localStorage.setItem('chatgpt_include_metadata', includeMetadataCheckbox.checked.toString());
-        
-        showNotification("Settings saved. Reloading images...");
-        fetchAllImagesForDisplay();
-      });
-      exportZipBtn.addEventListener('click', handleExportAllAsZip);
-      includeMetadataCheckbox.addEventListener('change', () => {
-         localStorage.setItem('chatgpt_include_metadata', includeMetadataCheckbox.checked.toString());
-      });
-      downloadBtn.addEventListener('click', () => {
-        const imageSrc = modalImage.src;
-        const imageTitle = modalTitle.textContent || 'image';
-        const tempLink = document.createElement('a');
-        tempLink.href = imageSrc;
-        // Try to get extension from src if it's a blob or has one, otherwise default
-        let extension = 'jpg';
-        try {
-            const urlParts = new URL(imageSrc);
-            const pathParts = urlParts.pathname.split('.');
-            if (pathParts.length > 1) extension = pathParts.pop();
-        } catch(e) { /* ignore if not a valid URL for parsing extension */ }
+        localStorage.setItem('chatgpt_api_token', validationResult.data);
+        if (newTeamId) localStorage.setItem('chatgpt_team_id', newTeamId); else localStorage.removeItem('chatgpt_team_id');
+        if(includeMetadataCheckbox) localStorage.setItem('chatgpt_include_metadata', includeMetadataCheckbox.checked.toString());
+        showNotification("Settings saved. Reloading images..."); fetchAndDisplayGalleryImages();
+      }); else console.error("[INIT] saveSettingsBtn not found");
 
+      if(exportZipBtn) exportZipBtn.addEventListener('click', handleExportAllAsZip); else console.error("[INIT] exportZipBtn not found");
+      if(includeMetadataCheckbox) includeMetadataCheckbox.addEventListener('change', () => { localStorage.setItem('chatgpt_include_metadata', includeMetadataCheckbox.checked.toString()); }); else console.error("[INIT] includeMetadataCheckbox not found");
+      
+      if(downloadBtn) downloadBtn.addEventListener('click', () => {
+        const imageSrc = modalImage.src; const imageTitle = modalTitle.textContent || 'image';
+        const tempLink = document.createElement('a'); tempLink.href = imageSrc;
+        let extension = 'jpg'; try { const urlParts = new URL(imageSrc); const pathParts = urlParts.pathname.split('.'); if (pathParts.length > 1) extension = pathParts.pop(); } catch(e) {}
         tempLink.download = sanitizeFilename(imageTitle) + '.' + extension;
         document.body.appendChild(tempLink); tempLink.click(); document.body.removeChild(tempLink);
-      });
-      closeModalBtn.addEventListener('click', closeModal);
-      modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal(); });
-      tokenInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSettingsBtn.click(); });
-      teamIdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveSettingsBtn.click(); });
-      console.log('Initialization complete');
+      }); else console.error("[INIT] downloadBtn not found");
+
+      if(closeModalBtn) closeModalBtn.addEventListener('click', closeModal); else console.error("[INIT] closeModalBtn not found");
+      if(modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); }); else console.error("[INIT] modal not found");
+      
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal && !modal.classList.contains('hidden')) closeModal(); });
+      
+      if(tokenInput) tokenInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && saveSettingsBtn) saveSettingsBtn.click(); }); else console.error("[INIT] tokenInput not found");
+      if(teamIdInput) teamIdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && saveSettingsBtn) saveSettingsBtn.click(); }); else console.error("[INIT] teamIdInput not found");
+      
+      console.log('[INIT] Initialization complete.');
     }
 
     // Start the app
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-    else init();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        console.log("DOMContentLoaded event fired.");
+        init();
+      });
+    } else {
+      console.log("Document already loaded, running init directly.");
+      init();
+    }
   </script>
 </body>
 </html>`;
