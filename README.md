@@ -27,14 +27,18 @@ CloseAI Image Gallery 是一个轻量级应用程序，可协助你查看并管�
 
 1. 安装 [Deno](https://deno.land/manual/getting_started/installation)
 2. 克隆此仓库
+
    ```bash
    git clone https://github.com/yourusername/closeai-image-galary.git
    cd closeai-image-galary
    ```
+
 3. 启动开发服务器
+
    ```bash
    deno task start
    ```
+
 4. 在浏览器中访问 `http://localhost:8000`
 
 ### 生产构建
@@ -60,7 +64,7 @@ deno task preview
 
 - **框架**: [Fresh](https://fresh.deno.dev/) - 基于 Deno 的现代全栈 Web 框架
 - **运行时**: [Deno](https://deno.land/) - 现代的 JavaScript/TypeScript 运行时
-- **前端**: 
+- **前端**:
   - [Preact](https://preactjs.com/) - 轻量级 React 替代方案
   - [Tailwind CSS](https://tailwindcss.com/) - 用于快速 UI 开发的实用优先 CSS 框架
   - TypeScript - 类型安全的 JavaScript
@@ -69,7 +73,7 @@ deno task preview
   - 岛屿架构 (Islands Architecture)
   - 零配置开发体验
   - 边缘优化的性能
-- **API 集成**: 
+- **API 集成**:
   - 使用 ChatGPT API 获取图片
   - 图片代理以确保全球访问
 
@@ -99,7 +103,7 @@ deno task update
 
 ### 项目结构
 
-```
+```txt
 ├── routes/          # 页面路由
 ├── islands/         # 客户端交互组件
 ├── components/      # 服务端组件
