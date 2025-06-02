@@ -17,3 +17,6 @@ node_modules/
 
 # Old files
 *.bak
+
+# DOCS for AI
+doc-for-ai/

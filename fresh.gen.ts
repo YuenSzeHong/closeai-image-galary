@@ -4,17 +4,27 @@
 
 import * as $_404 from "./routes/_404.tsx";
 import * as $_app from "./routes/_app.tsx";
+import * as $api_images from "./routes/api/images.ts";
+import * as $api_proxy from "./routes/api/proxy.ts";
 import * as $index from "./routes/index.tsx";
-
+import * as $ImageGallery from "./islands/ImageGallery.tsx";
+import * as $SettingsForm from "./islands/SettingsForm.tsx";
+import * as $ThemeToggle from "./islands/ThemeToggle.tsx";
 import type { Manifest } from "$fresh/server.ts";
 
 const manifest = {
   routes: {
     "./routes/_404.tsx": $_404,
     "./routes/_app.tsx": $_app,
+    "./routes/api/images.ts": $api_images,
+    "./routes/api/proxy.ts": $api_proxy,
     "./routes/index.tsx": $index,
   },
-  islands: {},
+  islands: {
+    "./islands/ImageGallery.tsx": $ImageGallery,
+    "./islands/SettingsForm.tsx": $SettingsForm,
+    "./islands/ThemeToggle.tsx": $ThemeToggle,
+  },
   baseUrl: import.meta.url,
 } satisfies Manifest;
 
