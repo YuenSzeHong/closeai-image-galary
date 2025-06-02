@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 
 interface ImageItem {
   id: string;
@@ -22,6 +23,10 @@ export default function ImageGallery() {
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
+  
+  const [apiToken] = useLocalStorage<string>("chatgpt_api_token", "");
+  const [teamId] = useLocalStorage<string>("chatgpt_team_id", "");
+  const [batchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp * 1000);
@@ -35,7 +40,6 @@ export default function ImageGallery() {
   };
 
   const loadImages = async (reset = false) => {
-    const apiToken = localStorage.getItem("chatgpt_api_token");
     if (!apiToken) {
       setImages([]);
       return;
@@ -43,12 +47,9 @@ export default function ImageGallery() {
 
     setLoading(true);
     try {
-      const teamId = localStorage.getItem("chatgpt_team_id");
-      const batchSize = localStorage.getItem("chatgpt_batch_size") || "50";
-
       const url = new URL("/api/images", window.location.origin);
       if (!reset && cursor) url.searchParams.set("after", cursor);
-      url.searchParams.set("limit", batchSize);
+      url.searchParams.set("limit", batchSize.toString());
 
       const headers: Record<string, string> = { "x-api-token": apiToken };
       if (teamId && teamId.trim() !== "") headers["x-team-id"] = teamId;
@@ -148,7 +149,7 @@ export default function ImageGallery() {
   if (images.length === 0 && !loading) {
     return (
       <div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">
-        {localStorage.getItem("chatgpt_api_token")
+        {apiToken
           ? "No images found."
           : "Enter your API token to view your images"}
       </div>

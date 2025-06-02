@@ -1,21 +1,23 @@
 import { useEffect, useState } from "preact/hooks";
+import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 
 export default function ThemeToggle() {
   const [isDark, setIsDark] = useState(false);
+  const [theme, setTheme] = useLocalStorage<string>("chatgpt_gallery_theme", "");
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem("chatgpt_gallery_theme");
-    if (savedTheme) {
-      setIsDark(savedTheme === "dark");
-      applyTheme(savedTheme);
+    if (theme) {
+      setIsDark(theme === "dark");
+      applyTheme(theme);
     } else if (
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
     ) {
       setIsDark(true);
       applyTheme("dark");
+      setTheme("dark");
     }
-  }, []);
+  }, [theme, setTheme]);
 
   const applyTheme = (theme: string) => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -24,7 +26,7 @@ export default function ThemeToggle() {
   const toggleTheme = () => {
     const newTheme = isDark ? "light" : "dark";
     setIsDark(!isDark);
-    localStorage.setItem("chatgpt_gallery_theme", newTheme);
+    setTheme(newTheme);
     applyTheme(newTheme);
   };
 

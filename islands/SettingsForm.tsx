@@ -1,25 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
+import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 
 export default function SettingsForm() {
-  const [token, setToken] = useState("");
-  const [teamId, setTeamId] = useState("");
-  const [batchSize, setBatchSize] = useState(50);
-  const [includeMetadata, setIncludeMetadata] = useState(true);
-
-  useEffect(() => {
-    const storedToken = localStorage.getItem("chatgpt_api_token") || "";
-    const storedTeamId = localStorage.getItem("chatgpt_team_id") || "";
-    const storedBatchSize = parseInt(
-      localStorage.getItem("chatgpt_batch_size") || "50",
-      10,
-    );
-    const storedIncludeMeta = localStorage.getItem("chatgpt_include_metadata");
-
-    setToken(storedToken);
-    setTeamId(storedTeamId);
-    setBatchSize(storedBatchSize);
-    setIncludeMetadata(storedIncludeMeta !== "false");
-  }, []);
+  const [token, setToken] = useLocalStorage<string>("chatgpt_api_token", "");
+  const [teamId, setTeamId] = useLocalStorage<string>("chatgpt_team_id", "");
+  const [batchSize, setBatchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
+  const [includeMetadata, setIncludeMetadata] = useLocalStorage<boolean>("chatgpt_include_metadata", true);
 
   const handleSaveSettings = () => {
     if (!token.trim()) {
@@ -27,17 +13,14 @@ export default function SettingsForm() {
       return;
     }
 
-    localStorage.setItem("chatgpt_api_token", token.trim());
+    setToken(token.trim());
     if (teamId.trim()) {
-      localStorage.setItem("chatgpt_team_id", teamId.trim());
+      setTeamId(teamId.trim());
     } else {
-      localStorage.removeItem("chatgpt_team_id");
+      setTeamId("");
     }
-    localStorage.setItem("chatgpt_batch_size", batchSize.toString());
-    localStorage.setItem(
-      "chatgpt_include_metadata",
-      includeMetadata.toString(),
-    );
+    setBatchSize(batchSize);
+    setIncludeMetadata(includeMetadata);
 
     // Trigger custom event for gallery reload
     window.dispatchEvent(new CustomEvent("settingsSaved"));
