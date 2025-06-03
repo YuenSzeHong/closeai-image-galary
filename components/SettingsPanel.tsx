@@ -9,6 +9,31 @@ export default function SettingsPanel() {
       >
       </div>
       <SettingsForm />
+      
+      {/* Database Management Section */}
+      <div class="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
+          Local Storage Management
+        </h3>
+        <div class="flex gap-2 mb-4">
+          <button
+            id="clearCurrentTeamBtn"
+            class="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 transition-colors text-sm"
+          >
+            Clear Current Workspace
+          </button>
+          <button
+            id="clearAllDataBtn"
+            class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors text-sm"
+          >
+            Clear All Data
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          Images are cached locally for faster loading. Use these buttons to clear cached data if needed.
+        </p>
+      </div>
+
       <div class="text-sm text-gray-600 dark:text-gray-400">
         <p class="mb-2">
           Provide your ChatGPT API token. For team workspaces, also provide the

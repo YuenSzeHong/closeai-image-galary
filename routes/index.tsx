@@ -10,39 +10,6 @@ export default function Home() {
       <Head>
         <title>CloseAI Image Gallery</title>
         <meta name="description" content="View all your generated images from ChatGPT" />
-        <script src="https://cdn.tailwindcss.com"></script>
-        <script>
-          {`
-            tailwind.config = {
-              darkMode: 'class',
-              theme: {
-                extend: {
-                  colors: {
-                    primary: '#10a37f',
-                    primaryDark: '#0c8c6a',
-                    error: '#ef4444',
-                    gray: { 850: '#18212f', 900: '#111827' }
-                  }
-                }
-              }
-            }
-          `}
-        </script>
-        <style>
-          {`
-            .gallery-image-container {
-              width: 100%; aspect-ratio: 3 / 4; display: flex;
-              align-items: center; justify-content: center;
-              overflow: hidden; border-radius: 0.25rem;
-            }
-            .gallery-image-container.placeholder {
-              background-color: #e5e7eb;
-              animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-            }
-            .dark .gallery-image-container.placeholder { background-color: #374151; }
-            .gallery-image-container img { width: 100%; height: 100%; object-fit: cover; }
-          `}
-        </style>
       </Head>
       
       <div class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 transition-colors duration-300 min-h-screen">

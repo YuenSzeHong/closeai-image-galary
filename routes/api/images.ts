@@ -9,6 +9,7 @@ interface ImageItem {
   height: number;
   title: string;
   created_at: number;
+  metadata?: any;
   encodings: {
     thumbnail: {
       path: string;
@@ -35,6 +36,7 @@ async function fetchImagesFromChatGPT(
   teamId?: string,
   after?: string,
   limit?: number,
+  metadataOnly = false,
 ): Promise<GalleryResponse> {
   const targetUrl = new URL(
     "https://chatgpt.com/backend-api/my/recent/image_gen",
@@ -44,14 +46,25 @@ async function fetchImagesFromChatGPT(
     String(limit && limit > 0 && limit <= 1000 ? limit : 50),
   );
   if (after) targetUrl.searchParams.set("after", after);
+  
+  // Add metadata-only parameter if supported by API
+  if (metadataOnly) {
+    targetUrl.searchParams.set("metadata_only", "true");
+  }
 
   const headers: HeadersInit = {
     "accept": "*/*",
     "authorization": "Bearer " + apiToken,
     "cache-control": "no-cache",
-    "user-agent": "DenoGalleryApp/1.0",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   };
-  if (teamId && teamId.trim() !== "") headers["chatgpt-account-id"] = teamId;
+  
+  // Only add team header if we have a real team ID (not "personal" or empty)
+  if (teamId && teamId.trim() !== "" && teamId.trim() !== "personal") {
+    headers["chatgpt-account-id"] = teamId.trim();
+  }
+
+  
 
   const response = await fetch(targetUrl.toString(), { headers });
 
@@ -73,6 +86,7 @@ async function fetchImagesFromChatGPT(
   }
 
   const data = await response.json();
+
   const items: ImageItem[] = (data.items || []).map((item: any) => {
     const originalFullUrl = item.url;
     const originalThumbnailPath = item.encodings?.thumbnail?.path;
@@ -84,6 +98,7 @@ async function fetchImagesFromChatGPT(
       height: item.height,
       title: item.title,
       created_at: item.created_at,
+      metadata: item.metadata,
       encodings: {
         thumbnail: {
           path: originalThumbnailPath
@@ -113,6 +128,7 @@ export const handler: Handlers = {
 
     const after = url.searchParams.get("after");
     const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    const metadataOnly = url.searchParams.get("metadata_only") === "true";
 
     try {
       const images = await fetchImagesFromChatGPT(
@@ -120,6 +136,7 @@ export const handler: Handlers = {
         teamId || undefined,
         after || undefined,
         limit,
+        metadataOnly,
       );
       return Response.json(images);
     } catch (error) {

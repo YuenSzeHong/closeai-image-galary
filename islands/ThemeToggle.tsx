@@ -1,33 +1,24 @@
 import { useEffect, useState } from "preact/hooks";
-import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 
 export default function ThemeToggle() {
   const [isDark, setIsDark] = useState(false);
-  const [theme, setTheme] = useLocalStorage<string>("chatgpt_gallery_theme", "");
 
   useEffect(() => {
-    if (theme) {
-      setIsDark(theme === "dark");
-      applyTheme(theme);
-    } else if (
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    ) {
-      setIsDark(true);
-      applyTheme("dark");
-      setTheme("dark");
-    }
-  }, [theme, setTheme]);
-
-  const applyTheme = (theme: string) => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  };
+    // Sync with current DOM state
+    setIsDark(document.documentElement.classList.contains('dark'));
+  }, []);
 
   const toggleTheme = () => {
-    const newTheme = isDark ? "light" : "dark";
-    setIsDark(!isDark);
-    setTheme(newTheme);
-    applyTheme(newTheme);
+    const willBeDark = !isDark;
+    setIsDark(willBeDark);
+    
+    if (willBeDark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
   };
 
   return (
@@ -36,16 +27,18 @@ export default function ThemeToggle() {
       title="Toggle theme"
       class="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary"
     >
+      {/* Sun icon for light mode */}
       <svg
-        class={`theme-icon w-6 h-6 ${isDark ? "hidden" : "block"}`}
+        class={`w-6 h-6 transition-all duration-200 ${isDark ? "hidden" : "block"}`}
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 24 24"
         fill="currentColor"
       >
         <path d="M12 9a3 3 0 100 6 3 3 0 000-6zm0-2a5 5 0 110 10 5 5 0 010-10zm0-3.5a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2a.5.5 0 01.5-.5zm0 17a.5.5 0 01.5.5v2a.5.5 0 01-1 0v-2a.5.5 0 01.5-.5zM4.222 5.636a.5.5 0 01.707-.707l1.414 1.414a.5.5 0 01-.707.707L4.222 5.636zm14.142 14.142a.5.5 0 01.707-.707l1.414 1.414a.5.5 0 01-.707.707l-1.414-1.414zM19.778 5.636L18.364 4.222a.5.5 0 01.707-.707l1.414 1.414a.5.5 0 01-.707.707zM5.636 19.778L4.222 18.364a.5.5 0 01.707-.707l1.414 1.414a.5.5 0 01-.707.707zM2.5 12a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2a.5.5 0 01-.5-.5zm17 0a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2a.5.5 0 01-.5-.5z" />
       </svg>
+      {/* Moon icon for dark mode */}
       <svg
-        class={`theme-icon w-6 h-6 ${isDark ? "block" : "hidden"}`}
+        class={`w-6 h-6 transition-all duration-200 ${isDark ? "block" : "hidden"}`}
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 24 24"
         fill="currentColor"

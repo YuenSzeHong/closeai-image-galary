@@ -3,37 +3,72 @@ import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 
 export default function SettingsForm() {
   const [token, setToken] = useLocalStorage<string>("chatgpt_api_token", "");
-  const [teamId, setTeamId] = useLocalStorage<string>("chatgpt_team_id", "");
+  const [teamId, setTeamId] = useLocalStorage<string>("chatgpt_team_id", "personal");
   const [batchSize, setBatchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
   const [includeMetadata, setIncludeMetadata] = useLocalStorage<boolean>("chatgpt_include_metadata", true);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSaveSettings = () => {
-    if (!token.trim()) {
-      alert("Please enter a valid API token");
-      return;
+  const showError = (message: string) => {
+    const errorEl = document.getElementById("errorMessage");
+    if (errorEl) {
+      errorEl.textContent = message;
+      errorEl.classList.remove("hidden");
     }
+  };
 
-    setToken(token.trim());
-    if (teamId.trim()) {
-      setTeamId(teamId.trim());
-    } else {
-      setTeamId("");
+  const hideError = () => {
+    const errorEl = document.getElementById("errorMessage");
+    if (errorEl) {
+      errorEl.classList.add("hidden");
     }
-    setBatchSize(batchSize);
-    setIncludeMetadata(includeMetadata);
+  };
 
-    // Trigger custom event for gallery reload
-    window.dispatchEvent(new CustomEvent("settingsSaved"));
-
-    // Show notification
+  const showNotification = (message: string) => {
     const notification = document.getElementById("notification");
     if (notification) {
+      notification.textContent = message;
       notification.classList.remove("translate-x-full");
       notification.classList.add("translate-x-0");
       setTimeout(() => {
         notification.classList.add("translate-x-full");
         notification.classList.remove("translate-x-0");
       }, 3000);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    if (!token.trim()) {
+      showError("Please enter a valid API token");
+      return;
+    }
+
+    hideError();
+    setIsLoading(true);
+
+    try {
+      // Validate token format
+      const cleanToken = token.startsWith('Bearer ') ? token.substring(7).trim() : token.trim();
+      
+      if (cleanToken.length < 10) {
+        throw new Error("Token appears to be too short");
+      }
+
+      // Save settings
+      setToken(cleanToken);
+      setTeamId(teamId || "personal");
+      setBatchSize(Math.max(1, Math.min(1000, batchSize)));
+      setIncludeMetadata(includeMetadata);
+
+      // Trigger gallery reload
+      showNotification("Settings saved. Loading images...");
+      window.dispatchEvent(new CustomEvent("settingsSaved", {
+        detail: { token: cleanToken, teamId: teamId || "personal" }
+      }));
+
+    } catch (error) {
+      showError(error.message || "Failed to save settings");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -65,18 +100,26 @@ export default function SettingsForm() {
         <input
           type="text"
           id="teamIdInput"
-          placeholder="Enter Team ID for team workspace"
-          value={teamId}
-          onInput={(e) => setTeamId((e.target as HTMLInputElement).value)}
+          placeholder="Enter Team ID for team workspace (leave empty for personal)"
+          value={teamId === "personal" ? "" : teamId}
+          onInput={(e) => {
+            const value = (e.target as HTMLInputElement).value.trim();
+            setTeamId(value || "personal");
+          }}
           class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
         />
       </div>
       <div class="mb-4 sm:flex sm:items-center sm:gap-4">
         <button
           onClick={handleSaveSettings}
-          class="w-full sm:w-auto bg-primary text-white px-6 py-3 rounded hover:bg-primaryDark transition-colors mb-3 sm:mb-0"
+          disabled={isLoading}
+          class={`w-full sm:w-auto px-6 py-3 rounded transition-colors mb-3 sm:mb-0 ${
+            isLoading 
+              ? "bg-gray-400 cursor-not-allowed text-white"
+              : "bg-primary text-white hover:bg-primaryDark"
+          }`}
         >
-          Save Settings & Load Images
+          {isLoading ? "Loading..." : "Save Settings & Load Images"}
         </button>
         <div class="flex items-center gap-2">
           <label
