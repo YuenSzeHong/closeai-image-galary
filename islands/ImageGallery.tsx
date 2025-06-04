@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 import ImageModal from "./ImageModal.tsx";
 import GalleryItem, { type ImageItem } from "../components/GalleryItem.tsx";
+import SettingsPanel from "../components/SettingsPanel.tsx";
 
 interface GalleryResponse {
   items: ImageItem[];
@@ -367,8 +368,11 @@ export default function ImageGallery() {
 
   if (images.length === 0 && !loading) {
     return (
-      <div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">
-        {apiToken ? "未找到图像。" : "输入您的 API 令牌以查看您的图像"}
+      <div class="space-y-6">
+        {!apiToken && <SettingsPanel />}
+        <div class="col-span-full bg-white dark:bg-gray-800 rounded-lg shadow p-10 text-center text-gray-600 dark:text-gray-400">
+          {apiToken ? "未找到图像。" : "配置访问令牌后即可查看您的图像"}
+        </div>
       </div>
     );
   }

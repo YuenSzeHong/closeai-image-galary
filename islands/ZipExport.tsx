@@ -18,7 +18,7 @@ export default function ZipExport() {
   const handleExport = async () => {
     if (!apiToken) {
       setExportState("error");
-      setMessage("需要API令牌才能导出");
+      setMessage("需要访问令牌才能导出");
       return;
     }
 

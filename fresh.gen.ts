@@ -4,10 +4,12 @@
 
 import * as $_404 from "./routes/_404.tsx";
 import * as $_app from "./routes/_app.tsx";
+import * as $about from "./routes/about.tsx";
 import * as $api_export from "./routes/api/export.tsx";
 import * as $api_images from "./routes/api/images.ts";
 import * as $api_proxy from "./routes/api/proxy.ts";
 import * as $index from "./routes/index.tsx";
+import * as $settings from "./routes/settings.tsx";
 import * as $ImageGallery from "./islands/ImageGallery.tsx";
 import * as $ImageModal from "./islands/ImageModal.tsx";
 import * as $ProgressBar from "./islands/ProgressBar.tsx";
@@ -21,10 +23,12 @@ const manifest = {
   routes: {
     "./routes/_404.tsx": $_404,
     "./routes/_app.tsx": $_app,
+    "./routes/about.tsx": $about,
     "./routes/api/export.tsx": $api_export,
     "./routes/api/images.ts": $api_images,
     "./routes/api/proxy.ts": $api_proxy,
     "./routes/index.tsx": $index,
+    "./routes/settings.tsx": $settings,
   },
   islands: {
     "./islands/ImageGallery.tsx": $ImageGallery,

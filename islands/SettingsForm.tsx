@@ -46,7 +46,7 @@ export default function SettingsForm() {
   };
   const handleSaveSettings = () => {
     if (!token.trim()) {
-      showError("请输入有效的 API 令牌");
+      showError("请输入有效的访问令牌");
       return;
     }
 
@@ -90,12 +90,12 @@ export default function SettingsForm() {
           for="tokenInput"
           class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
-          ChatGPT API 令牌：
+          ChatGPT 访问令牌：
         </label>
         <input
           type="password"
           id="tokenInput"
-          placeholder="输入您的 ChatGPT API 令牌"
+          placeholder="输入您的 ChatGPT 访问令牌"
           value={token}
           onInput={(e) => setToken((e.target as HTMLInputElement).value)}
           class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"

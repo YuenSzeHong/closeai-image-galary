@@ -3,9 +3,9 @@ import { z } from "zod";
 
 const TokenSchema = z
   .string()
-  .min(10, "令牌太短")
+  .min(10, "访问令牌太短")
   .refine((val) => !val.includes(" "), {
-    message: "令牌不应包含空格",
+    message: "访问令牌不应包含空格",
   });
 
 async function fetchSingleBatch(
@@ -60,7 +60,7 @@ async function fetchSingleBatch(
 
     if (response.status === 401) {
       throw new Error(
-        "无效的 API 令牌或对指定账户未授权。",
+        "无效的访问令牌或对指定账户未授权。",
       );
     }
     if (response.status === 403) {
@@ -98,7 +98,7 @@ export const handler: Handlers = {
     const tokenResult = TokenSchema.safeParse(token);
     if (!tokenResult.success) {
       return Response.json(
-        { error: "无效的 API 令牌", details: tokenResult.error.errors },
+        { error: "无效的访问令牌", details: tokenResult.error.errors },
         { status: 401 },
       );
     }
