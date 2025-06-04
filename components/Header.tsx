@@ -5,10 +5,10 @@ export default function Header() {
     <header class="flex justify-between items-center mb-8">
       <div>
         <h1 class="text-3xl font-bold text-center text-gray-900 dark:text-white">
-          CloseAI Image Gallery
+          CloseAI 图库
         </h1>
         <p class="text-center text-gray-600 dark:text-gray-400">
-          View all your generated images
+          查看您生成的所有图像
         </p>
       </div>
       <ThemeToggle />

@@ -1,11 +1,20 @@
-import { useEffect, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 
 export default function SettingsForm() {
   const [token, setToken] = useLocalStorage<string>("chatgpt_api_token", "");
-  const [teamId, setTeamId] = useLocalStorage<string>("chatgpt_team_id", "personal");
-  const [batchSize, setBatchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
-  const [includeMetadata, setIncludeMetadata] = useLocalStorage<boolean>("chatgpt_include_metadata", true);
+  const [teamId, setTeamId] = useLocalStorage<string>(
+    "chatgpt_team_id",
+    "personal",
+  );
+  const [batchSize, setBatchSize] = useLocalStorage<number>(
+    "chatgpt_batch_size",
+    50,
+  );
+  const [includeMetadata, setIncludeMetadata] = useLocalStorage<boolean>(
+    "chatgpt_include_metadata",
+    true,
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   const showError = (message: string) => {
@@ -35,10 +44,9 @@ export default function SettingsForm() {
       }, 3000);
     }
   };
-
-  const handleSaveSettings = async () => {
+  const handleSaveSettings = () => {
     if (!token.trim()) {
-      showError("Please enter a valid API token");
+      showError("请输入有效的 API 令牌");
       return;
     }
 
@@ -47,10 +55,12 @@ export default function SettingsForm() {
 
     try {
       // Validate token format
-      const cleanToken = token.startsWith('Bearer ') ? token.substring(7).trim() : token.trim();
-      
+      const cleanToken = token.startsWith("Bearer ")
+        ? token.substring(7).trim()
+        : token.trim();
+
       if (cleanToken.length < 10) {
-        throw new Error("Token appears to be too short");
+        throw new Error("令牌长度过短");
       }
 
       // Save settings
@@ -60,13 +70,14 @@ export default function SettingsForm() {
       setIncludeMetadata(includeMetadata);
 
       // Trigger gallery reload
-      showNotification("Settings saved. Loading images...");
-      window.dispatchEvent(new CustomEvent("settingsSaved", {
-        detail: { token: cleanToken, teamId: teamId || "personal" }
-      }));
-
+      showNotification("设置已保存。正在加载图像...");
+      globalThis.dispatchEvent(
+        new CustomEvent("settingsSaved", {
+          detail: { token: cleanToken, teamId: teamId || "personal" },
+        }),
+      );
     } catch (error) {
-      showError(error.message || "Failed to save settings");
+      showError(error.message || "保存设置失败");
     } finally {
       setIsLoading(false);
     }
@@ -79,12 +90,12 @@ export default function SettingsForm() {
           for="tokenInput"
           class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
-          ChatGPT API Token:
+          ChatGPT API 令牌：
         </label>
         <input
           type="password"
           id="tokenInput"
-          placeholder="Enter your ChatGPT API token"
+          placeholder="输入您的 ChatGPT API 令牌"
           value={token}
           onInput={(e) => setToken((e.target as HTMLInputElement).value)}
           class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
@@ -95,12 +106,12 @@ export default function SettingsForm() {
           for="teamIdInput"
           class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
-          Team ID (Optional):
+          团队 ID（可选）：
         </label>
         <input
           type="text"
           id="teamIdInput"
-          placeholder="Enter Team ID for team workspace (leave empty for personal)"
+          placeholder="输入团队工作区的团队 ID（个人账户请留空）"
           value={teamId === "personal" ? "" : teamId}
           onInput={(e) => {
             const value = (e.target as HTMLInputElement).value.trim();
@@ -111,22 +122,23 @@ export default function SettingsForm() {
       </div>
       <div class="mb-4 sm:flex sm:items-center sm:gap-4">
         <button
+          type="button"
           onClick={handleSaveSettings}
           disabled={isLoading}
           class={`w-full sm:w-auto px-6 py-3 rounded transition-colors mb-3 sm:mb-0 ${
-            isLoading 
+            isLoading
               ? "bg-gray-400 cursor-not-allowed text-white"
               : "bg-primary text-white hover:bg-primaryDark"
           }`}
         >
-          {isLoading ? "Loading..." : "Save Settings & Load Images"}
+          {isLoading ? "加载中..." : "保存设置并加载图像"}
         </button>
         <div class="flex items-center gap-2">
           <label
             for="batchSizeInput"
             class="text-sm text-gray-700 dark:text-gray-300"
           >
-            API Batch size:
+            API 批次大小：
           </label>
           <input
             type="number"
@@ -142,7 +154,7 @@ export default function SettingsForm() {
             class="w-24 p-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
           />
           <span class="text-xs text-gray-400 dark:text-gray-500">
-            (1-1000, for API metadata)
+            （1-1000，用于 API 元数据）
           </span>
         </div>
       </div>
@@ -159,7 +171,7 @@ export default function SettingsForm() {
               setIncludeMetadata((e.target as HTMLInputElement).checked)}
             class="mr-2 h-4 w-4 text-primary focus:ring-primary border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
           />
-          Include metadata.json in ZIP
+          在 ZIP 文件中包含 metadata.json
         </label>
       </div>
     </>

@@ -5,31 +5,34 @@ export default function ThemeToggle() {
 
   useEffect(() => {
     // Sync with current DOM state
-    setIsDark(document.documentElement.classList.contains('dark'));
+    setIsDark(document.documentElement.classList.contains("dark"));
   }, []);
 
   const toggleTheme = () => {
     const willBeDark = !isDark;
     setIsDark(willBeDark);
-    
+
     if (willBeDark) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("theme", "dark");
     } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme", "light");
     }
   };
 
   return (
     <button
+      type="button"
       onClick={toggleTheme}
-      title="Toggle theme"
+      title="切换主题"
       class="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary"
     >
       {/* Sun icon for light mode */}
       <svg
-        class={`w-6 h-6 transition-all duration-200 ${isDark ? "hidden" : "block"}`}
+        class={`w-6 h-6 transition-all duration-200 ${
+          isDark ? "hidden" : "block"
+        }`}
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 24 24"
         fill="currentColor"
@@ -38,7 +41,9 @@ export default function ThemeToggle() {
       </svg>
       {/* Moon icon for dark mode */}
       <svg
-        class={`w-6 h-6 transition-all duration-200 ${isDark ? "block" : "hidden"}`}
+        class={`w-6 h-6 transition-all duration-200 ${
+          isDark ? "block" : "hidden"
+        }`}
         xmlns="http://www.w3.org/2000/svg"
         viewBox="0 0 24 24"
         fill="currentColor"

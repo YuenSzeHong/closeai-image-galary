@@ -1,6 +1,8 @@
 # CloseAI Image Gallery
 
-CloseAI Image Gallery 是一个轻量级应用程序，可协助你查看并管理所有通过 ChatGPT 生成的图片。它提供了一个简洁的界面，让用户能够以画廊形式浏览所有生成的图片，而无需不断回到 ChatGPT 聊天界面寻找。
+CloseAI Image Gallery 是一个轻量级应用程序，可协助你查看并管理所有通过 ChatGPT
+生成的图片。它提供了一个简洁的界面，让用户能够以画廊形式浏览所有生成的图片，而无需不断回到
+ChatGPT 聊天界面寻找。
 
 ![CloseAI Image Gallery 截图](https://example.com/screenshot.png)
 
@@ -69,7 +71,8 @@ deno task preview
 - **运行时**: [Deno](https://deno.land/) - 现代的 JavaScript/TypeScript 运行时
 - **前端**:
   - [Preact](https://preactjs.com/) - 轻量级 React 替代方案
-  - [Tailwind CSS](https://tailwindcss.com/) - 用于快速 UI 开发的实用优先 CSS 框架
+  - [Tailwind CSS](https://tailwindcss.com/) - 用于快速 UI 开发的实用优先 CSS
+    框架
   - TypeScript - 类型安全的 JavaScript
 - **特性**:
   - 服务端渲染 (SSR)

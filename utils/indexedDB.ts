@@ -284,7 +284,7 @@ class ImageMetadataDB {
     const existing = await this.db!.get("teams", teamId);
     const teamInfo: TeamInfo = {
       id: teamId,
-      name: teamId === "personal" ? "Personal Workspace" : `Team: ${teamId}`,
+      name: teamId === "personal" ? "个人工作区" : `团队：${teamId}`,
       lastSync: Date.now(),
       imageCount: imageCount ?? (existing?.imageCount || 0),
       lastMetadataSync: options?.lastMetadataSync ??

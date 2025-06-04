@@ -3,47 +3,46 @@
 @tailwind utilities;
 /* Only keep essential custom utilities that can't be replaced with Tailwind */
 @layer utilities {
+  /* Smooth modal transitions */
+  .modal-enter {
+    opacity: 0;
+    transform: scale(0.95);
+  }
 
-    /* Smooth modal transitions */
-    .modal-enter {
-        opacity: 0;
-        transform: scale(0.95);
-    }
+  .modal-enter-active {
+    opacity: 1;
+    transform: scale(1);
+    transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  }
 
-    .modal-enter-active {
-        opacity: 1;
-        transform: scale(1);
-        transition: opacity 0.2s ease-out, transform 0.2s ease-out;
-    }
+  /* Custom pulse animation for placeholders */
+  .pulse-loading {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
 
-    /* Custom pulse animation for placeholders */
-    .pulse-loading {
-        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    }
+  /* Gallery image container styles */
+  .gallery-image-container {
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 0.25rem;
+  }
 
-    /* Gallery image container styles */
-    .gallery-image-container {
-        width: 100%;
-        aspect-ratio: 3 / 4;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden;
-        border-radius: 0.25rem;
-    }
+  .gallery-image-container.placeholder {
+    background-color: #e5e7eb;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
 
-    .gallery-image-container.placeholder {
-        background-color: #e5e7eb;
-        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    }
+  .dark .gallery-image-container.placeholder {
+    background-color: #374151;
+  }
 
-    .dark .gallery-image-container.placeholder {
-        background-color: #374151;
-    }
-
-    .gallery-image-container img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
+  .gallery-image-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
 }

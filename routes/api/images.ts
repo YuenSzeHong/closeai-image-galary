@@ -26,9 +26,9 @@ interface GalleryResponse {
 
 const TokenSchema = z
   .string()
-  .min(10, "Token too short")
+  .min(10, "令牌太短")
   .refine((val) => !val.includes(" "), {
-    message: "Token should not contain spaces",
+    message: "令牌不应包含空格",
   });
 
 async function fetchImagesFromChatGPT(
@@ -46,7 +46,7 @@ async function fetchImagesFromChatGPT(
     String(limit && limit > 0 && limit <= 1000 ? limit : 50),
   );
   if (after) targetUrl.searchParams.set("after", after);
-  
+
   // Add metadata-only parameter if supported by API
   if (metadataOnly) {
     targetUrl.searchParams.set("metadata_only", "true");
@@ -56,32 +56,30 @@ async function fetchImagesFromChatGPT(
     "accept": "*/*",
     "authorization": "Bearer " + apiToken,
     "cache-control": "no-cache",
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "user-agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   };
-  
+
   // Only add team header if we have a real team ID (not "personal" or empty)
   if (teamId && teamId.trim() !== "" && teamId.trim() !== "personal") {
     headers["chatgpt-account-id"] = teamId.trim();
   }
 
-  
-
   const response = await fetch(targetUrl.toString(), { headers });
-
   if (!response.ok) {
-    const errorBody = await response.text();
+    const _errorBody = await response.text();
     if (response.status === 401) {
       throw new Error(
-        "Invalid API token or unauthorized for the specified account.",
+        "无效的 API 令牌或对指定账户未授权。",
       );
     }
     if (response.status === 403) {
       throw new Error(
-        "Access forbidden: Ensure API token has permissions for the account.",
+        "访问被拒绝：请确保 API 令牌对该账户具有权限。",
       );
     }
     throw new Error(
-      `ChatGPT API error: ${response.status} ${response.statusText}`,
+      `ChatGPT API 错误：${response.status} ${response.statusText}`,
     );
   }
 
@@ -121,7 +119,7 @@ export const handler: Handlers = {
     const tokenResult = TokenSchema.safeParse(token);
     if (!tokenResult.success) {
       return Response.json(
-        { error: "Invalid API token", details: tokenResult.error.errors },
+        { error: "无效的 API 令牌", details: tokenResult.error.errors },
         { status: 401 },
       );
     }
@@ -141,7 +139,7 @@ export const handler: Handlers = {
       return Response.json(images);
     } catch (error) {
       return Response.json(
-        { error: error.message || "Failed to fetch images from source" },
+        { error: (error as Error).message || "从源获取图像失败" },
         { status: 500 },
       );
     }

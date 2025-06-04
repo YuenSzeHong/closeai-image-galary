@@ -27,7 +27,6 @@ export default function TeamManager({ onTeamIdsChange }: TeamManagerProps) {
 
   const addTeamId = async () => {
     if (!newTeamId.trim() || teamIds.includes(newTeamId.trim())) return;
-
     const updatedTeamIds = [...teamIds, newTeamId.trim()];
     setTeamIds(updatedTeamIds);
     setNewTeamId("");
@@ -36,10 +35,9 @@ export default function TeamManager({ onTeamIdsChange }: TeamManagerProps) {
       await imageDB.saveUserTeamIds(updatedTeamIds);
       onTeamIdsChange(updatedTeamIds);
     } catch (error) {
-      console.error("Failed to save team IDs:", error);
+      console.error("保存团队 ID 失败:", error);
     }
   };
-
   const removeTeamId = async (teamIdToRemove: string) => {
     const updatedTeamIds = teamIds.filter((id) => id !== teamIdToRemove);
     setTeamIds(updatedTeamIds);
@@ -48,18 +46,18 @@ export default function TeamManager({ onTeamIdsChange }: TeamManagerProps) {
       await imageDB.saveUserTeamIds(updatedTeamIds);
       onTeamIdsChange(updatedTeamIds);
     } catch (error) {
-      console.error("Failed to save team IDs:", error);
+      console.error("保存团队 ID 失败:", error);
     }
   };
 
-  if (!isLoaded) return <div>Loading team settings...</div>;
+  if (!isLoaded) return <div>加载团队设置中...</div>;
 
   return (
     <div class="mb-4 p-4 border rounded-lg bg-gray-50">
-      <h3 class="text-lg font-semibold mb-3">Team Management</h3>
+      <h3 class="text-lg font-semibold mb-3">团队管理</h3>
 
       <div class="mb-3">
-        <label class="block text-sm font-medium mb-2">Active Teams:</label>
+        <label class="block text-sm font-medium mb-2">活跃团队:</label>
         <div class="flex flex-wrap gap-2">
           {teamIds.map((teamId) => (
             <span
@@ -86,7 +84,7 @@ export default function TeamManager({ onTeamIdsChange }: TeamManagerProps) {
           type="text"
           value={newTeamId}
           onInput={(e) => setNewTeamId((e.target as HTMLInputElement).value)}
-          placeholder="Add team ID (e.g., team-abc123)"
+          placeholder="添加团队 ID（例如：team-abc123）"
           class="flex-1 px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
           onKeyPress={(e) => e.key === "Enter" && addTeamId()}
         />
@@ -96,13 +94,13 @@ export default function TeamManager({ onTeamIdsChange }: TeamManagerProps) {
           class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           type="button"
         >
-          Add Team
+          添加团队
         </button>
       </div>
 
       <p class="text-xs text-gray-600 mt-2">
-        Add team IDs to fetch images from multiple ChatGPT teams. Use "personal"
-        for your personal account.
+        添加团队 ID 以从多个 ChatGPT 团队获取图像。对于个人账户请使用
+        "personal"。
       </p>
     </div>
   );

@@ -32,5 +32,3 @@ jobs:
           project: "frsh-closeai-image-galary"
           entrypoint: "main.ts"
           root: ""
-          
-          

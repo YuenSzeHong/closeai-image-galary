@@ -2,7 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 
 export function useLocalStorage<T>(
   key: string,
-  defaultValue: T
+  defaultValue: T,
 ): [T, (value: T | ((prev: T) => T)) => void, () => void] {
   const [value, setValue] = useState<T>(defaultValue);
 
@@ -19,7 +19,9 @@ export function useLocalStorage<T>(
 
   const setStoredValue = (newValue: T | ((prev: T) => T)) => {
     try {
-      const valueToStore = newValue instanceof Function ? newValue(value) : newValue;
+      const valueToStore = newValue instanceof Function
+        ? newValue(value)
+        : newValue;
       setValue(valueToStore);
       localStorage.setItem(key, JSON.stringify(valueToStore));
     } catch (error) {

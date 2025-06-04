@@ -6,14 +6,14 @@ export const handler: Handlers = {
     const imageUrl = url.searchParams.get("url");
 
     if (!imageUrl) {
-      return Response.json({ error: "Missing image URL" }, { status: 400 });
+      return Response.json({ error: "缺少图像 URL" }, { status: 400 });
     }
 
     try {
       const response = await fetch(imageUrl);
       if (!response.ok) {
         throw new Error(
-          `Failed to fetch image from source: ${response.status} ${response.statusText}`,
+          `从源获取图像失败: ${response.status} ${response.statusText}`,
         );
       }
       const contentType = response.headers.get("content-type") || "image/jpeg";
@@ -28,7 +28,7 @@ export const handler: Handlers = {
       });
     } catch (error) {
       return Response.json(
-        { error: "Failed to proxy image", details: error.message },
+        { error: "图像代理失败", details: (error as Error).message },
         { status: 502 },
       );
     }

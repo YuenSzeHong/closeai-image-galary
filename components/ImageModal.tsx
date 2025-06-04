@@ -7,15 +7,15 @@ export default function ImageModal() {
       <div class="relative max-w-[90vw] max-h-[90vh] flex items-center justify-center">
         <button
           id="closeModal"
-          title="Close modal (ESC)"
+          type="button"
+          title="关闭弹窗 (ESC)"
           class="absolute -top-12 right-0 text-white text-3xl font-bold hover:text-gray-300 transition-colors z-30"
         >
           &times;
         </button>
-        
         <a
           id="downloadImage"
-          title="Download image"
+          title="下载图片"
           class="absolute -top-12 left-0 text-white hover:text-gray-300 transition-colors cursor-pointer p-2 rounded-md hover:bg-black/30 z-30 flex items-center"
         >
           <svg
@@ -32,7 +32,7 @@ export default function ImageModal() {
               d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
             />
           </svg>
-          Download
+          下载
         </a>
 
         {/* Loading placeholder with fixed dimensions */}
@@ -41,11 +41,17 @@ export default function ImageModal() {
           class="relative bg-gray-200 dark:bg-gray-800 rounded animate-pulse flex items-center justify-center transition-all duration-200 ease-in-out"
           style="width: 400px; height: 400px; min-width: 200px; min-height: 200px;"
         >
-          <div id="modalLoadingText" class="text-gray-600 dark:text-gray-400 text-lg font-medium">
-            Loading...
+          <div
+            id="modalLoadingText"
+            class="text-gray-600 dark:text-gray-400 text-lg font-medium"
+          >
+            加载中...
           </div>
-          <div id="modalErrorText" class="text-red-500 text-lg font-medium hidden">
-            Failed to load image
+          <div
+            id="modalErrorText"
+            class="text-red-500 text-lg font-medium hidden"
+          >
+            图片加载失败
           </div>
         </div>
 
@@ -57,7 +63,7 @@ export default function ImageModal() {
           style="max-width: 90vw; max-height: 90vh;"
           data-reset-state="true"
         />
-        
+
         <div
           id="modalTitle"
           class="absolute -bottom-12 left-0 right-0 text-white text-base p-2 bg-black/50 rounded text-center"
