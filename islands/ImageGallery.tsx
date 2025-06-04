@@ -23,7 +23,7 @@ interface ImageItem {
 export default function ImageGallery() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [_cursor, setCursor] = useState<string | null>(null);
   const [_hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedImageMetadata, setSelectedImageMetadata] = useState<Record<string, unknown> | null>(null);
@@ -55,7 +55,7 @@ export default function ImageGallery() {
     });
   };
 
-  const loadImages = async (reset = false) => {
+  const loadImages = async (_reset = false) => {
     if (!apiToken) {
       setImages([]);
       return;
@@ -66,11 +66,7 @@ export default function ImageGallery() {
 
     try {
       const url = new URL("/api/images", globalThis.location.origin);
-      url.searchParams.set("limit", "50"); // Reasonable batch size
-
-      if (!reset && cursor) {
-        url.searchParams.set("after", cursor);
-      }
+      // Remove limit parameter to fetch all images
 
       const headers: Record<string, string> = {
         "x-api-token": apiToken,
@@ -92,14 +88,12 @@ export default function ImageGallery() {
 
       const data = await response.json();
       
-      if (reset) {
-        setImages(data.items || []);
-      } else {
-        setImages((prev) => [...prev, ...(data.items || [])]);
-      }
+      // Always reset since we're fetching all images
+      setImages(data.items || []);
 
-      setCursor(data.cursor);
-      setHasMore(!!data.cursor);
+      // Since we fetch all images, there's no more pagination needed
+      setCursor(null);
+      setHasMore(false);
     } catch (error) {
       console.error("加载图像时出错:", error);
       setError((error as Error).message || "加载图像失败");
@@ -114,7 +108,7 @@ export default function ImageGallery() {
     console.log("Opening modal for image:", image.id);
     
     // Use the original full-size image URL instead of thumbnail
-    const fullImageUrl = image.url || image.originalUrl;
+    const fullImageUrl = image.url || image.originalUrl || "";
     
     // Set the current image for the modal
     setCurrentModalImage({
@@ -138,7 +132,7 @@ export default function ImageGallery() {
       setCursor(null);
       setHasMore(true);
       setError(null);
-      loadImages(true);
+      loadImages();
     };
 
     const handleDataCleared = () => {
@@ -147,7 +141,7 @@ export default function ImageGallery() {
       setCursor(null);
       setHasMore(true);
       if (apiToken) {
-        loadImages(true);
+        loadImages();
       }
     };
 
@@ -156,7 +150,7 @@ export default function ImageGallery() {
 
     // Initial load
     if (apiToken) {
-      loadImages(true);
+      loadImages();
     }
 
     return () => {
@@ -174,7 +168,7 @@ export default function ImageGallery() {
         <p class="text-red-600 dark:text-red-400 text-sm mb-4">{error}</p>{" "}
         <button
           type="button"
-          onClick={() => loadImages(true)}
+          onClick={() => loadImages()}
           class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
         >
           重试
@@ -230,19 +224,7 @@ export default function ImageGallery() {
         </div>
       )}
 
-      {!loading && _hasMore && images.length > 0 && (
-        <div class="col-span-full text-center py-8">
-          <button
-            type="button"
-            onClick={() => loadImages(false)}
-            class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg transition-colors"
-          >
-            加载更多图像
-          </button>
-        </div>
-      )}
-
-      {images.length > 0 && !_hasMore && (
+      {images.length > 0 && !loading && (
         <div class="col-span-full text-center py-4 text-gray-600 dark:text-gray-400">
           <p>{images.length} 张图像已全部加载</p>
         </div>

@@ -98,7 +98,19 @@ async function fetchSingleBatch(
 
   const data = await response.json();
 
-  const items: ImageItem[] = (data.items || []).map((item: any) => {
+  const items: ImageItem[] = (data.items || []).map((item: {
+    id: string;
+    url: string;
+    width: number;
+    height: number;
+    title: string;
+    created_at: number;
+    encodings?: {
+      thumbnail?: {
+        path: string;
+      };
+    };
+  }) => {
     return {
       id: item.id,
       url: item.url, // Keep original URL
@@ -131,13 +143,12 @@ async function fetchImagesFromChatGPT(
   let currentCursor = after;
   let batchCount = 0;
   const maxBatches = 100; // Safety limit to prevent infinite loops
-  
-  // If a specific limit is set and it's reasonable, respect it for single batch
-  if (limit && limit > 0 && limit <= 1000) {
+    // Only use single batch mode if pagination is explicitly requested with both limit and cursor
+  if (limit && limit > 0 && limit <= 1000 && after) {
     return await fetchSingleBatch(apiToken, teamId, after, limit, metadataOnly);
   }
 
-  // Fetch all batches
+  // Fetch all batches by default to show all user's images
   while (batchCount < maxBatches) {
     try {
       const batch = await fetchSingleBatch(
@@ -190,10 +201,9 @@ export const handler: Handlers = {
         { error: "无效的 API 令牌", details: tokenResult.error.errors },
         { status: 401 },
       );
-    }
-
-    const after = url.searchParams.get("after");
-    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    }    const after = url.searchParams.get("after");
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam ? parseInt(limitParam, 10) : undefined;
     const metadataOnly = url.searchParams.get("metadata_only") === "true";
 
     try {
