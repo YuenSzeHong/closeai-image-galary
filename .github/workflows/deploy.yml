@@ -1,9 +1,7 @@
 name: Deploy
 on:
   push:
-    branches: 
-      - main
-      - dev/freash-refactor
+    branches: main
 
 jobs:
   deploy:
@@ -23,29 +21,12 @@ jobs:
         with:
           deno-version: v2.x
 
-      # 只有Fresh框架分支才需要build
       - name: Build step
-        if: github.ref == 'refs/heads/dev/freash-refactor'
         run: "deno task build"
 
-      # main分支部署到生产环境
       - name: Upload to Production
-        if: github.ref == 'refs/heads/main'
         uses: denoland/deployctl@v1
         with:
           project: "closeai-image-galary"
           entrypoint: "main.ts"
           root: ""
-        env:
-          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
-
-      # dev分支部署到开发环境
-      - name: Upload to Development  
-        if: github.ref == 'refs/heads/dev/freash-refactor'
-        uses: denoland/deployctl@v1
-        with:
-          project: "frsh-closeai-image-galary"
-          entrypoint: "main.ts"
-          root: ""
-        env:
-          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
