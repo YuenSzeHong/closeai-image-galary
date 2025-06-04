@@ -9,7 +9,7 @@ interface ImageItem {
   height: number;
   title: string;
   created_at: number;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
   encodings: {
     thumbnail: {
       path: string;
@@ -31,7 +31,7 @@ const TokenSchema = z
     message: "令牌不应包含空格",
   });
 
-async function fetchImagesFromChatGPT(
+async function fetchSingleBatch(
   apiToken: string,
   teamId?: string,
   after?: string,
@@ -68,6 +68,19 @@ async function fetchImagesFromChatGPT(
   const response = await fetch(targetUrl.toString(), { headers });
   if (!response.ok) {
     const _errorBody = await response.text();
+
+    console.debug(
+      `ChatGPT API 请求失败: ${response.status} ${response.statusText}`,
+      _errorBody,
+    );
+    
+    // check if it is blocked by cloudflare
+    if (_errorBody.includes("Cloudflare")) {
+      throw new Error(
+        "请求被 Cloudflare 阻止。请检查您的网络连接或尝试稍后再试。",
+      );
+    }
+
     if (response.status === 401) {
       throw new Error(
         "无效的 API 令牌或对指定账户未授权。",
@@ -86,28 +99,83 @@ async function fetchImagesFromChatGPT(
   const data = await response.json();
 
   const items: ImageItem[] = (data.items || []).map((item: any) => {
-    const originalFullUrl = item.url;
-    const originalThumbnailPath = item.encodings?.thumbnail?.path;
     return {
       id: item.id,
-      url: `/api/proxy?url=${encodeURIComponent(originalFullUrl)}`,
-      originalUrl: originalFullUrl,
+      url: item.url, // Keep original URL
+      originalUrl: item.url,
       width: item.width,
       height: item.height,
       title: item.title,
       created_at: item.created_at,
-      metadata: item.metadata,
+      // Store the complete raw metadata from ChatGPT
+      metadata: item, // Pass the entire raw response
       encodings: {
         thumbnail: {
-          path: originalThumbnailPath
-            ? `/api/proxy?url=${encodeURIComponent(originalThumbnailPath)}`
-            : "",
-          originalPath: originalThumbnailPath,
+          path: item.encodings?.thumbnail?.path || "", // Keep original thumbnail URL
+          originalPath: item.encodings?.thumbnail?.path,
         },
       },
     };
   });
   return { items, cursor: data.cursor };
+}
+
+async function fetchImagesFromChatGPT(
+  apiToken: string,
+  teamId?: string,
+  after?: string,
+  limit?: number,
+  metadataOnly = false,
+): Promise<GalleryResponse> {
+  const allItems: ImageItem[] = [];
+  let currentCursor = after;
+  let batchCount = 0;
+  const maxBatches = 100; // Safety limit to prevent infinite loops
+  
+  // If a specific limit is set and it's reasonable, respect it for single batch
+  if (limit && limit > 0 && limit <= 1000) {
+    return await fetchSingleBatch(apiToken, teamId, after, limit, metadataOnly);
+  }
+
+  // Fetch all batches
+  while (batchCount < maxBatches) {
+    try {
+      const batch = await fetchSingleBatch(
+        apiToken,
+        teamId,
+        currentCursor,
+        50, // Use smaller batch size for efficiency
+        metadataOnly,
+      );
+      
+      allItems.push(...batch.items);
+      batchCount++;
+      
+      // If there's no cursor, we've reached the end
+      if (!batch.cursor) {
+        break;
+      }
+      
+      currentCursor = batch.cursor;
+      
+      // Small delay to be respectful to the API
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error) {
+      // If we have some items already, return them instead of failing completely
+      if (allItems.length > 0) {
+        console.warn(`Failed to fetch batch ${batchCount + 1}, returning ${allItems.length} items:`, error);
+        break;
+      }
+      throw error;
+    }
+  }
+  
+  if (batchCount >= maxBatches) {
+    console.warn(`Reached maximum batch limit (${maxBatches}), returning ${allItems.length} items`);
+  }
+
+  return { items: allItems, cursor: undefined };
 }
 
 export const handler: Handlers = {

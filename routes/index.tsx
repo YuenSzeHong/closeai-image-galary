@@ -1,7 +1,6 @@
 import { Head } from "$fresh/runtime.ts";
 import Header from "../components/Header.tsx";
 import SettingsPanel from "../components/SettingsPanel.tsx";
-import ImageModal from "../components/ImageModal.tsx";
 import ImageGallery from "../islands/ImageGallery.tsx";
 
 export default function Home() {
@@ -22,7 +21,6 @@ export default function Home() {
           </div>
         </div>
 
-        <ImageModal />
         <div
           id="notification"
           class="fixed top-5 right-5 bg-primary text-white p-4 rounded shadow-lg transform translate-x-full transition-transform duration-300 z-50"

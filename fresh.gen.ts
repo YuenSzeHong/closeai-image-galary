@@ -4,28 +4,34 @@
 
 import * as $_404 from "./routes/_404.tsx";
 import * as $_app from "./routes/_app.tsx";
+import * as $api_export from "./routes/api/export.tsx";
 import * as $api_images from "./routes/api/images.ts";
 import * as $api_proxy from "./routes/api/proxy.ts";
 import * as $index from "./routes/index.tsx";
 import * as $ImageGallery from "./islands/ImageGallery.tsx";
+import * as $ImageModal from "./islands/ImageModal.tsx";
 import * as $SettingsForm from "./islands/SettingsForm.tsx";
 import * as $ThemeProvider from "./islands/ThemeProvider.tsx";
 import * as $ThemeToggle from "./islands/ThemeToggle.tsx";
+import * as $ZipExport from "./islands/ZipExport.tsx";
 import type { Manifest } from "$fresh/server.ts";
 
 const manifest = {
   routes: {
     "./routes/_404.tsx": $_404,
     "./routes/_app.tsx": $_app,
+    "./routes/api/export.tsx": $api_export,
     "./routes/api/images.ts": $api_images,
     "./routes/api/proxy.ts": $api_proxy,
     "./routes/index.tsx": $index,
   },
   islands: {
     "./islands/ImageGallery.tsx": $ImageGallery,
+    "./islands/ImageModal.tsx": $ImageModal,
     "./islands/SettingsForm.tsx": $SettingsForm,
     "./islands/ThemeProvider.tsx": $ThemeProvider,
     "./islands/ThemeToggle.tsx": $ThemeToggle,
+    "./islands/ZipExport.tsx": $ZipExport,
   },
   baseUrl: import.meta.url,
 } satisfies Manifest;

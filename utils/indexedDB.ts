@@ -8,7 +8,7 @@ interface ImageMetadata {
   height: number;
   title: string;
   created_at: number;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
   encodings: {
     thumbnail: {
       path: string;

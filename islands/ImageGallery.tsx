@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { useLocalStorage } from "../hooks/useLocalStorage.ts";
+import ImageModal from "./ImageModal.tsx";
 
 interface ImageItem {
   id: string;
@@ -9,7 +10,7 @@ interface ImageItem {
   height: number;
   title: string;
   created_at: number;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
   encodings: {
     thumbnail: {
       path: string;
@@ -23,12 +24,25 @@ export default function ImageGallery() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  const [_hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedImageMetadata, setSelectedImageMetadata] = useState<Record<string, unknown> | null>(null);
+  
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [currentModalImage, setCurrentModalImage] = useState<{
+    src: string;
+    alt: string;
+    title: string;
+  } | null>(null);
 
   const [apiToken] = useLocalStorage<string>("chatgpt_api_token", "");
   const [teamId] = useLocalStorage<string>("chatgpt_team_id", "personal");
-  const [batchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
+  const [_batchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
+
+  const getProxyUrl = (originalUrl: string) => {
+    return `/api/proxy?url=${encodeURIComponent(originalUrl)}`;
+  };
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp * 1000);
@@ -52,7 +66,7 @@ export default function ImageGallery() {
 
     try {
       const url = new URL("/api/images", globalThis.location.origin);
-      url.searchParams.set("limit", batchSize.toString());
+      url.searchParams.set("limit", "50"); // Reasonable batch size
 
       if (!reset && cursor) {
         url.searchParams.set("after", cursor);
@@ -77,14 +91,14 @@ export default function ImageGallery() {
       }
 
       const data = await response.json();
-
+      
       if (reset) {
         setImages(data.items || []);
       } else {
         setImages((prev) => [...prev, ...(data.items || [])]);
       }
 
-      setCursor(data.cursor || null);
+      setCursor(data.cursor);
       setHasMore(!!data.cursor);
     } catch (error) {
       console.error("加载图像时出错:", error);
@@ -94,108 +108,27 @@ export default function ImageGallery() {
     }
   };
 
-  const resetModalState = (isLoading = true) => {
-    const modalContainer = document.getElementById("modalImageContainer");
-    const modalImage = document.getElementById(
-      "modalImage",
-    ) as HTMLImageElement;
-    const loadingText = document.getElementById("modalLoadingText");
-    const errorText = document.getElementById("modalErrorText");
 
-    if (!modalContainer || !modalImage) return;
 
-    modalImage.style.opacity = "0";
-    modalImage.src = "";
+  const openModal = (image: ImageItem) => {
+    console.log("Opening modal for image:", image.id);
+    
+    // Use the original full-size image URL instead of thumbnail
+    const fullImageUrl = image.url || image.originalUrl;
+    
+    // Set the current image for the modal
+    setCurrentModalImage({
+      src: getProxyUrl(fullImageUrl),
+      alt: image.title || "无标题图像",
+      title: image.title || "无标题图像"
+    });
 
-    if (isLoading) {
-      modalContainer.classList.add("animate-pulse");
+    // Set metadata state for modal display
+    console.log("Setting metadata for image:", image.id, image.metadata);
+    setSelectedImageMetadata(image.metadata || null);
 
-      if (loadingText) {
-        loadingText.classList.remove("hidden");
-      }
-
-      if (errorText) {
-        errorText.classList.add("hidden");
-      }
-    }
-  };
-
-  const openModal = (
-    imageSrc: string,
-    imageTitle: string,
-    width?: number,
-    height?: number,
-  ) => {
-    const modal = document.getElementById("imageModal");
-    const modalImage = document.getElementById(
-      "modalImage",
-    ) as HTMLImageElement;
-    const modalTitle = document.getElementById("modalTitle");
-    const modalContainer = document.getElementById("modalImageContainer");
-    const loadingText = document.getElementById("modalLoadingText");
-    const errorText = document.getElementById("modalErrorText");
-
-    if (!modal || !modalImage || !modalContainer) return;
-
-    // Calculate container dimensions based on image aspect ratio and viewport
-    const maxWidth = Math.min(globalThis.innerWidth * 0.9, 1200);
-    const maxHeight = Math.min(globalThis.innerHeight * 0.9, 800);
-
-    let containerWidth = maxWidth;
-    let containerHeight = maxHeight;
-
-    if (width && height) {
-      const aspectRatio = width / height;
-      if (aspectRatio > maxWidth / maxHeight) {
-        // Image is wider - fit to width
-        containerWidth = maxWidth;
-        containerHeight = maxWidth / aspectRatio;
-      } else {
-        // Image is taller - fit to height
-        containerHeight = maxHeight;
-        containerWidth = maxHeight * aspectRatio;
-      }
-    }
-
-    // Set container dimensions to prevent layout shift
-    modalContainer.style.width = `${containerWidth}px`;
-    modalContainer.style.height = `${containerHeight}px`;
-
-    // Reset modal state and prepare for loading
-    resetModalState(true);
-    modalImage.style.width = `${containerWidth}px`;
-    modalImage.style.height = `${containerHeight}px`;
-
-    // Set title
-    if (modalTitle) modalTitle.textContent = imageTitle;
-
-    // Show modal first
-    modal.classList.remove("hidden");
-    modal.classList.add("flex");
-
-    // Setup image load handler
-    const handleImageLoad = () => {
-      modalContainer.classList.remove("animate-pulse");
-      if (loadingText) loadingText.classList.add("hidden");
-      modalImage.style.opacity = "1";
-    };
-
-    const handleImageError = () => {
-      modalContainer.classList.remove("animate-pulse");
-      if (loadingText) loadingText.classList.add("hidden");
-      if (errorText) {
-        errorText.textContent = "图像加载失败";
-        errorText.classList.remove("hidden");
-      }
-    };
-
-    // Add event listeners
-    modalImage.addEventListener("load", handleImageLoad, { once: true });
-    modalImage.addEventListener("error", handleImageError, { once: true });
-
-    // Start loading image
-    modalImage.src = imageSrc;
-    modalImage.alt = imageTitle;
+    // Open the modal
+    setIsModalOpen(true);
   };
 
   useEffect(() => {
@@ -231,76 +164,6 @@ export default function ImageGallery() {
       globalThis.removeEventListener("dataCleared", handleDataCleared);
     };
   }, [apiToken, teamId]);
-
-  useEffect(() => {
-    // Modal event listeners
-    const modal = document.getElementById("imageModal");
-    const closeModalBtn = document.getElementById("closeModal");
-    const downloadBtn = document.getElementById("downloadImage");
-    const modalImage = document.getElementById(
-      "modalImage",
-    ) as HTMLImageElement;
-
-    const closeModal = () => {
-      if (modal) {
-        modal.classList.add("hidden");
-        modal.classList.remove("flex");
-
-        // Reset modal state using the shared function
-        resetModalState(false);
-
-        // Reset container dimensions to default
-        const modalContainer = document.getElementById("modalImageContainer");
-        if (modalContainer) {
-          modalContainer.style.width = "400px";
-          modalContainer.style.height = "400px";
-        }
-      }
-    };
-
-    const handleDownload = async () => {
-      if (!modalImage.src) return;
-
-      try {
-        const response = await fetch(modalImage.src);
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = modalImage.alt || "image.jpg";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-
-        URL.revokeObjectURL(url);
-      } catch (error) {
-        console.error("下载失败:", error);
-      }
-    };
-
-    const handleModalClick = (e: Event) => {
-      if (e.target === modal) closeModal();
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && modal && !modal.classList.contains("hidden")) {
-        closeModal();
-      }
-    };
-
-    if (closeModalBtn) closeModalBtn.addEventListener("click", closeModal);
-    if (downloadBtn) downloadBtn.addEventListener("click", handleDownload);
-    if (modal) modal.addEventListener("click", handleModalClick);
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      if (closeModalBtn) closeModalBtn.removeEventListener("click", closeModal);
-      if (downloadBtn) downloadBtn.removeEventListener("click", handleDownload);
-      if (modal) modal.removeEventListener("click", handleModalClick);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, []);
 
   if (error) {
     return (
@@ -338,16 +201,10 @@ export default function ImageGallery() {
           >
             <div
               class="w-full aspect-[3/4] flex items-center justify-center overflow-hidden rounded cursor-pointer"
-              onClick={() =>
-                openModal(
-                  image.url,
-                  image.title || "无标题图像",
-                  image.width,
-                  image.height,
-                )}
+              onClick={() => openModal(image)}
             >
               <img
-                src={image.encodings.thumbnail.path || image.url}
+                src={getProxyUrl(image.encodings.thumbnail.path || image.url)}
                 alt={image.title || "无标题图像"}
                 class="w-full h-full object-cover"
                 loading="lazy"
@@ -366,30 +223,58 @@ export default function ImageGallery() {
       </div>
 
       {loading && (
-        <div class="text-center py-8">
+        <div class="col-span-full text-center py-8">
           <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent">
           </div>
           <p class="mt-2 text-gray-600 dark:text-gray-400">正在加载图像...</p>
         </div>
       )}
 
-      {hasMore && !loading && images.length > 0 && (
-        <div class="text-center py-4">
+      {!loading && _hasMore && images.length > 0 && (
+        <div class="col-span-full text-center py-8">
           <button
             type="button"
             onClick={() => loadImages(false)}
-            class="bg-primary text-white px-6 py-2 rounded hover:bg-primaryDark transition-colors"
+            class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg transition-colors"
           >
             加载更多图像
           </button>
         </div>
       )}
 
-      {images.length > 0 && (
-        <div class="text-center py-4 text-gray-600 dark:text-gray-400">
-          <p>{images.length} 张图像已加载</p>
+      {images.length > 0 && !_hasMore && (
+        <div class="col-span-full text-center py-4 text-gray-600 dark:text-gray-400">
+          <p>{images.length} 张图像已全部加载</p>
         </div>
       )}
+
+      <ImageModal 
+        metadata={selectedImageMetadata}
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setCurrentModalImage(null);
+          setSelectedImageMetadata(null);
+        }}
+        onDownload={async () => {
+          if (!currentModalImage?.src) return;
+          try {
+            const response = await fetch(currentModalImage.src);
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = currentModalImage.alt || "image.jpg";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          } catch (error) {
+            console.error("下载失败:", error);
+          }
+        }}
+        currentImage={currentModalImage}
+      />
     </>
   );
 }
