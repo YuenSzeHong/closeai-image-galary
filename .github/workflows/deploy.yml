@@ -36,6 +36,7 @@ jobs:
           project: "closeai-image-galary"
           entrypoint: "main.ts"
           root: ""
+          token: ${{ secrets.DENO_DEPLOY_TOKEN }}
 
       # dev分支部署到开发环境
       - name: Upload to Development  
@@ -45,3 +46,4 @@ jobs:
           project: "frsh-closeai-image-galary"
           entrypoint: "main.ts"
           root: ""
+          token: ${{ secrets.DENO_DEPLOY_TOKEN }}
