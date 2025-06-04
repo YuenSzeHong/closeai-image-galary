@@ -7,26 +7,36 @@ export default function ZipExport() {
   const [exportState, setExportState] = useState<ExportState>("idle");
   const [message, setMessage] = useState("");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
 
   const [apiToken] = useLocalStorage<string>("chatgpt_api_token", "");
   const [teamId] = useLocalStorage<string>("chatgpt_team_id", "personal");
-  const [includeMetadata] = useLocalStorage<boolean>(
+  const [includeMetadata, setIncludeMetadata] = useLocalStorage<boolean>(
     "chatgpt_include_metadata",
     true,
   );
-
   const handleExport = async () => {
     if (!apiToken) {
       setExportState("error");
       setMessage("需要访问令牌才能导出");
+      globalThis.dispatchEvent(new CustomEvent("exportError", { 
+        detail: { error: "需要访问令牌才能导出" } 
+      }));
       return;
     }
 
     setExportState("preparing");
     setMessage("正在准备导出...");
     setDownloadUrl(null);
+    setProgress(0);
+
+    // Dispatch export start event
+    globalThis.dispatchEvent(new CustomEvent("exportStart"));
 
     try {
+      // Show progress updates
+      setProgress(10);
+      
       const response = await fetch("/api/export", {
         method: "POST",
         headers: {
@@ -39,6 +49,8 @@ export default function ZipExport() {
         }),
       });
 
+      setProgress(30);
+
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || "导出失败");
@@ -46,6 +58,7 @@ export default function ZipExport() {
 
       setExportState("downloading");
       setMessage("正在生成ZIP文件...");
+      setProgress(60);
 
       // 获取文件名
       const contentDisposition = response.headers.get("Content-Disposition");
@@ -55,10 +68,14 @@ export default function ZipExport() {
         if (matches) filename = matches[1];
       }
 
+      setProgress(80);
+
       // 创建下载
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       setDownloadUrl(url);
+
+      setProgress(90);
 
       // 自动下载
       const link = document.createElement("a");
@@ -68,18 +85,31 @@ export default function ZipExport() {
       link.click();
       document.body.removeChild(link);
 
+      setProgress(100);
       setExportState("success");
       setMessage(`导出完成！文件：${filename}`);
+
+      // Dispatch export success event
+      globalThis.dispatchEvent(new CustomEvent("exportSuccess", { 
+        detail: { filename } 
+      }));
     } catch (error) {
       console.error("导出错误:", error);
       setExportState("error");
       setMessage((error as Error).message || "导出失败");
+      setProgress(0);
+      
+      // Dispatch export error event
+      globalThis.dispatchEvent(new CustomEvent("exportError", { 
+        detail: { error: (error as Error).message || "导出失败" } 
+      }));
     }
   };
 
   const resetState = () => {
     setExportState("idle");
     setMessage("");
+    setProgress(0);
     if (downloadUrl) {
       URL.revokeObjectURL(downloadUrl);
       setDownloadUrl(null);
@@ -127,16 +157,40 @@ export default function ZipExport() {
         return "";
     }
   };
-
   return (
     <div class="space-y-4">
+      {/* 导出选项 */}
+      <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+        <h4 class="text-sm font-medium text-gray-900 dark:text-white mb-3">
+          导出选项
+        </h4>
+        <label
+          for="exportIncludeMetadata"
+          class="flex items-center text-sm text-gray-700 dark:text-gray-300"
+        >
+          <input
+            type="checkbox"
+            id="exportIncludeMetadata"
+            checked={includeMetadata}
+            onChange={(e) =>
+              setIncludeMetadata((e.target as HTMLInputElement).checked)}
+            class="mr-2 h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
+          />
+          在 ZIP 文件中包含 metadata.json
+        </label>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
+          包含图像的详细信息（标题、尺寸、创建时间等）
+        </p>
+      </div>
+
       {/* 导出按钮 */}
-      <div class="flex gap-3">
-        <button
+      <div class="flex gap-3">        <button
           type="button"
           onClick={handleExport}
           disabled={exportState === "preparing" ||
             exportState === "downloading" || !apiToken}
+          data-export-trigger
+          title="导出为ZIP"
           class={`flex-1 sm:flex-none px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
             exportState === "preparing" || exportState === "downloading" ||
               !apiToken
@@ -172,21 +226,24 @@ export default function ZipExport() {
             <div class="flex-1">
               <p class="font-medium">{message}</p>
 
-              {/* 进度动画 */}
+              {/* 增强的进度动画 */}
               {(exportState === "preparing" || exportState === "downloading") &&
                 (
                   <div class="mt-2">
                     <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                       <div
-                        class="bg-blue-600 h-2 rounded-full animate-pulse"
-                        style="width: 60%"
+                        class="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                        style={`width: ${progress}%`}
                       >
                       </div>
                     </div>
-                    <p class="text-xs mt-1 opacity-75">
-                      {exportState === "preparing"
-                        ? "正在获取图片列表..."
-                        : "正在下载并打包图片..."}
+                    <p class="text-xs mt-1 opacity-75 flex justify-between">
+                      <span>
+                        {exportState === "preparing"
+                          ? "正在获取图片列表..."
+                          : "正在下载并打包图片..."}
+                      </span>
+                      <span>{progress}%</span>
                     </p>
                   </div>
                 )}
@@ -202,6 +259,21 @@ export default function ZipExport() {
                     <span>📥</span>
                     重新下载
                   </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (navigator.share && downloadUrl) {
+                        navigator.share({
+                          title: 'ChatGPT图像导出',
+                          text: '已成功导出ChatGPT图像集合',
+                        }).catch(console.error);
+                      }
+                    }}
+                    class="inline-flex items-center gap-1 text-sm px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                  >
+                    <span>📤</span>
+                    分享
+                  </button>
                 </div>
               )}
             </div>
@@ -221,6 +293,11 @@ export default function ZipExport() {
           📦 <strong>包含内容</strong>：所有图片{" "}
           {includeMetadata && "+ 元数据文件"}
         </p>
+        {!apiToken && (
+          <p class="text-orange-600 dark:text-orange-400">
+            ⚠️ 请先在设置中配置访问令牌
+          </p>
+        )}
       </div>
     </div>
   );

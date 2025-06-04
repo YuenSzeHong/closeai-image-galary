@@ -1,6 +1,7 @@
 import { Head } from "$fresh/runtime.ts";
 import Header from "../components/Header.tsx";
 import SettingsForm from "../islands/SettingsForm.tsx";
+import ZipExport from "../islands/ZipExport.tsx";
 
 export default function Settings() {
   return (
@@ -25,10 +26,19 @@ export default function Settings() {
             >
             </div>
             
-            <SettingsForm />
+            <SettingsForm />            {/* ZIP Export Section */}
+            <div id="export" class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+              <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
+                导出图像
+              </h3>
+              <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                将您的所有 ChatGPT 图像下载为 ZIP 文件，包含可选的元数据信息。
+              </p>
+              <ZipExport />
+            </div>
 
             {/* Database Management Section */}
-            <div class="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+            <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
               <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
                 本地存储管理
               </h3>

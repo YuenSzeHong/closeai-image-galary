@@ -179,10 +179,9 @@ export const handler: Handlers = {
         );
 
         await zipWriter.add("metadata.json", new TextReader(metadata));
-      }
-
-      // 4. 分批添加图片
+      }      // 4. 分批添加图片
       let successful = 0;
+      let failed = 0;
       const BATCH_SIZE = 3; // 控制并发
 
       for (let i = 0; i < allImages.length; i += BATCH_SIZE) {
@@ -191,7 +190,10 @@ export const handler: Handlers = {
         for (const image of batch) {
           try {
             const response = await fetch(image.url);
-            if (!response.ok) continue;
+            if (!response.ok) {
+              failed++;
+              continue;
+            }
 
             const extension = getExtensionFromUrl(image.url);
             const datePrefix = formatDateForFilename(image.created_at);
@@ -201,30 +203,46 @@ export const handler: Handlers = {
             // 直接从response stream添加到ZIP
             await zipWriter.add(filename, response.body);
             successful++;
+            
+            // Log progress
+            if (successful % 10 === 0) {
+              console.log(`导出进度: ${successful}/${allImages.length} 图片`);
+            }
           } catch (error) {
             console.warn(`跳过图片 ${image.title}:`, error);
+            failed++;
           }
         }
-      } // 5. 完成ZIP并获取数据
+        
+        // Small delay between batches to prevent overwhelming the server
+        if (i + BATCH_SIZE < allImages.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }// 5. 完成ZIP并获取数据
       const zipFileBlob = await zipWriter.close();
 
       if (successful === 0) {
         return Response.json({ error: "没有图片可以成功下载" }, {
           status: 500,
         });
-      }
-
-      // 6. 返回ZIP文件
+      }      // 6. 返回ZIP文件
       const workspaceName = teamId && teamId !== "personal"
         ? "team"
         : "personal";
       const timestamp = formatDateForFilename(Date.now() / 1000);
+
+      console.log(`导出完成: ${successful} 成功, ${failed} 失败, 总计 ${allImages.length} 图片`);
 
       return new Response(zipFileBlob, {
         headers: {
           "Content-Type": "application/zip",
           "Content-Disposition":
             `attachment; filename="chatgpt_images_${workspaceName}_${timestamp}.zip"`,
+          "X-Export-Stats": JSON.stringify({
+            total: allImages.length,
+            successful,
+            failed,
+          }),
         },
       });
     } catch (error) {

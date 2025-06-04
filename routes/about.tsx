@@ -47,7 +47,41 @@ export default function About() {
                   <li>
                     团队 ID：在请求头中找到 `chatgpt-account-id`（仅在团队工作区中需要）。
                   </li>
-                </ol>
+                </ol>              </div>
+
+              <h3 class="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">
+                导出功能
+              </h3>
+              <div class="bg-green-50 dark:bg-green-900/20 border-l-4 border-green-500 p-6 mb-8">
+                <h4 class="font-semibold mb-3 text-gray-900 dark:text-white">
+                  ZIP 导出功能
+                </h4>
+                <ul class="list-disc pl-5 space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                  <li>
+                    <strong>批量导出</strong>：一键下载所有 ChatGPT 生成的图像为 ZIP 文件
+                  </li>
+                  <li>
+                    <strong>元数据支持</strong>：可选择包含图像元数据信息（JSON 格式）
+                  </li>
+                  <li>
+                    <strong>智能命名</strong>：文件按日期和标题自动命名，便于管理
+                  </li>
+                  <li>
+                    <strong>后端处理</strong>：服务器端压缩，支持大量图像无内存限制
+                  </li>
+                  <li>
+                    <strong>进度跟踪</strong>：实时显示导出进度和状态
+                  </li>
+                </ul>
+              </div>              <div class="bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 p-6 mb-8">
+                <h4 class="font-semibold mb-3 text-gray-900 dark:text-white">
+                  快捷键
+                </h4>
+                <ul class="list-disc pl-5 space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                  <li>
+                    <strong>Ctrl+,</strong> (或 Cmd+,)：打开设置页面
+                  </li>
+                </ul>
               </div>
 
               <h3 class="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">

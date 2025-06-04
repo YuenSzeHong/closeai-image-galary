@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Enable smooth scrolling for anchor navigation */
+html {
+  scroll-behavior: smooth;
+}
 @layer utilities {
   /* Gallery image aspect ratio - Tailwind doesn't have 3/4 aspect ratio */
     .gallery-image-container {

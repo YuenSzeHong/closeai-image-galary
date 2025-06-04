@@ -1,5 +1,8 @@
 import { type PageProps } from "$fresh/server.ts";
 import ThemeProvider from "../islands/ThemeProvider.tsx";
+import KeyboardShortcuts from "../islands/KeyboardShortcuts.tsx";
+import NotificationManager from "../islands/NotificationManager.tsx";
+import ExportStatus from "../islands/ExportStatus.tsx";
 
 export default function App({ Component }: PageProps) {
   return (
@@ -21,10 +24,11 @@ export default function App({ Component }: PageProps) {
             })();
           `,
           }}
-        />
-      </head>
-      <body>
+        />      </head>      <body>
         <ThemeProvider />
+        <KeyboardShortcuts />
+        <NotificationManager />
+        <ExportStatus />
         <Component />
       </body>
     </html>

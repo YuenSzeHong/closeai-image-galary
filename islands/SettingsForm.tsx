@@ -6,14 +6,9 @@ export default function SettingsForm() {
   const [teamId, setTeamId] = useLocalStorage<string>(
     "chatgpt_team_id",
     "personal",
-  );
-  const [batchSize, setBatchSize] = useLocalStorage<number>(
+  );  const [batchSize, setBatchSize] = useLocalStorage<number>(
     "chatgpt_batch_size",
     50,
-  );
-  const [includeMetadata, setIncludeMetadata] = useLocalStorage<boolean>(
-    "chatgpt_include_metadata",
-    true,
   );
   const [isLoading, setIsLoading] = useState(false);
 
@@ -61,13 +56,10 @@ export default function SettingsForm() {
 
       if (cleanToken.length < 10) {
         throw new Error("令牌长度过短");
-      }
-
-      // Save settings
+      }      // Save settings
       setToken(cleanToken);
       setTeamId(teamId || "personal");
       setBatchSize(Math.max(1, Math.min(1000, batchSize)));
-      setIncludeMetadata(includeMetadata);
 
       // Trigger gallery reload
       showNotification("设置已保存。正在加载图像...");
@@ -155,25 +147,35 @@ export default function SettingsForm() {
           />
           <span class="text-xs text-gray-400 dark:text-gray-500">
             （1-1000，用于 API 元数据）
-          </span>
+          </span>        </div>
+      </div>
+
+      {/* Quick Export Section */}
+      {token && (
+        <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <div class="flex items-center justify-between mb-2">
+            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              快速导出
+            </h4>
+            <a
+              href="/settings#export"
+              class="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              查看完整导出选项
+            </a>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            设置保存后，您可以前往{" "}
+            <a
+              href="/settings#export"
+              class="text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              导出页面
+            </a>{" "}
+            下载所有图像为 ZIP 文件
+          </p>
         </div>
-      </div>
-      <div class="mb-4">
-        <label
-          for="includeMetadataCheckbox"
-          class="flex items-center text-sm text-gray-700 dark:text-gray-300"
-        >
-          <input
-            type="checkbox"
-            id="includeMetadataCheckbox"
-            checked={includeMetadata}
-            onChange={(e) =>
-              setIncludeMetadata((e.target as HTMLInputElement).checked)}
-            class="mr-2 h-4 w-4 text-primary focus:ring-primary border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
-          />
-          在 ZIP 文件中包含 metadata.json
-        </label>
-      </div>
+      )}
     </>
   );
 }

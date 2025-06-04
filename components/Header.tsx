@@ -13,19 +13,17 @@ export default function Header() {
           </p>
         </div>
         <ThemeToggle />
-      </div>
-
-      <nav>
+      </div>      <nav>
         <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-2 flex gap-1">
           <a
             href="/"
             class="px-4 py-2 rounded-md text-sm font-medium transition-colors text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700"
           >
             图库
-          </a>
-          <a
+          </a>          <a
             href="/settings"
             class="px-4 py-2 rounded-md text-sm font-medium transition-colors text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700"
+            title="设置 (Ctrl+,)"
           >
             设置
           </a>

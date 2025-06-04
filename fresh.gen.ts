@@ -10,8 +10,11 @@ import * as $api_images from "./routes/api/images.ts";
 import * as $api_proxy from "./routes/api/proxy.ts";
 import * as $index from "./routes/index.tsx";
 import * as $settings from "./routes/settings.tsx";
+import * as $ExportStatus from "./islands/ExportStatus.tsx";
 import * as $ImageGallery from "./islands/ImageGallery.tsx";
 import * as $ImageModal from "./islands/ImageModal.tsx";
+import * as $KeyboardShortcuts from "./islands/KeyboardShortcuts.tsx";
+import * as $NotificationManager from "./islands/NotificationManager.tsx";
 import * as $ProgressBar from "./islands/ProgressBar.tsx";
 import * as $SettingsForm from "./islands/SettingsForm.tsx";
 import * as $ThemeProvider from "./islands/ThemeProvider.tsx";
@@ -31,8 +34,11 @@ const manifest = {
     "./routes/settings.tsx": $settings,
   },
   islands: {
+    "./islands/ExportStatus.tsx": $ExportStatus,
     "./islands/ImageGallery.tsx": $ImageGallery,
     "./islands/ImageModal.tsx": $ImageModal,
+    "./islands/KeyboardShortcuts.tsx": $KeyboardShortcuts,
+    "./islands/NotificationManager.tsx": $NotificationManager,
     "./islands/ProgressBar.tsx": $ProgressBar,
     "./islands/SettingsForm.tsx": $SettingsForm,
     "./islands/ThemeProvider.tsx": $ThemeProvider,

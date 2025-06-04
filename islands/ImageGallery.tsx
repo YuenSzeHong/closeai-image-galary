@@ -3,6 +3,7 @@ import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 import ImageModal from "./ImageModal.tsx";
 import GalleryItem, { type ImageItem } from "../components/GalleryItem.tsx";
 import SettingsPanel from "../components/SettingsPanel.tsx";
+import ZipExport from "./ZipExport.tsx";
 
 interface GalleryResponse {
   items: ImageItem[];
@@ -376,11 +377,29 @@ export default function ImageGallery() {
       </div>
     );
   }
-
   return (
     <>
       {/* Add top padding to account for progress bar */}
       <div class="pt-20">
+        {/* Gallery Controls Panel */}
+        {images.length > 0 && apiToken && (
+          <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-lg p-4">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div class="flex items-center gap-4">
+                <h3 class="text-lg font-medium text-gray-900 dark:text-white">
+                  图像库管理
+                </h3>
+                <span class="text-sm text-gray-500 dark:text-gray-400">
+                  {images.length} 张图像
+                </span>
+              </div>
+              <div class="flex-shrink-0">
+                <ZipExport />
+              </div>
+            </div>
+          </div>
+        )}
+
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
           {images.map((image) => (
             <GalleryItem
