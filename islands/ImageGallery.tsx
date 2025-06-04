@@ -1,32 +1,49 @@
 import { useEffect, useState } from "preact/hooks";
 import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 import ImageModal from "./ImageModal.tsx";
+import GalleryItem, { type ImageItem } from "../components/GalleryItem.tsx";
 
-interface ImageItem {
-  id: string;
-  url: string;
-  originalUrl?: string;
-  width: number;
-  height: number;
-  title: string;
-  created_at: number;
-  metadata?: Record<string, unknown>;
-  encodings: {
-    thumbnail: {
-      path: string;
-      originalPath?: string;
-      blobUrl?: string;
-    };
-  };
+interface GalleryResponse {
+  items: ImageItem[];
+  cursor?: string;
 }
+
+// Add function to transform raw ChatGPT API response to our format
+const transformChatGPTResponse = (rawData: any): GalleryResponse => {
+  const items: ImageItem[] = (rawData.items || []).map((item: any) => {
+    return {
+      id: item.id,
+      url: item.url, // Keep original URL
+      originalUrl: item.url,
+      width: item.width,
+      height: item.height,
+      title: item.title,
+      created_at: item.created_at,
+      // Store the complete raw metadata from ChatGPT
+      metadata: item, // Pass the entire raw response
+      encodings: {
+        thumbnail: {
+          path: item.encodings?.thumbnail?.path || "", // Keep original thumbnail URL
+          originalPath: item.encodings?.thumbnail?.path,
+        },
+      },
+    };
+  });
+  return { items, cursor: rawData.cursor };
+};
 
 export default function ImageGallery() {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [_cursor, setCursor] = useState<string | null>(null);
-  const [_hasMore, setHasMore] = useState(true);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedImageMetadata, setSelectedImageMetadata] = useState<Record<string, unknown> | null>(null);
+  const [loadingStats, setLoadingStats] = useState<{
+    totalBatches: number;
+    totalImages: number;
+    failedBatches: number;
+  }>({ totalBatches: 0, totalImages: 0, failedBatches: 0 });
   
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -38,7 +55,7 @@ export default function ImageGallery() {
 
   const [apiToken] = useLocalStorage<string>("chatgpt_api_token", "");
   const [teamId] = useLocalStorage<string>("chatgpt_team_id", "personal");
-  const [_batchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
+  const [batchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
 
   const getProxyUrl = (originalUrl: string) => {
     return `/api/proxy?url=${encodeURIComponent(originalUrl)}`;
@@ -55,54 +72,198 @@ export default function ImageGallery() {
     });
   };
 
-  const loadImages = async (_reset = false) => {
+  const fetchSingleBatch = async (
+    afterCursor?: string,
+    limit?: number
+  ): Promise<GalleryResponse> => {
+    const url = new URL("/api/images", globalThis.location.origin);
+    
+    if (afterCursor) {
+      url.searchParams.set("after", afterCursor);
+    }
+    if (limit) {
+      url.searchParams.set("limit", limit.toString());
+    }
+
+    const headers: Record<string, string> = {
+      "x-api-token": apiToken,
+    };
+
+    if (teamId && teamId !== "personal") {
+      headers["x-team-id"] = teamId;
+    }
+
+    const response = await fetch(url.toString(), { headers });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({
+        error: "Unknown API error",
+      }));
+      throw new Error(errorData.error || `API Error: ${response.status}`);
+    }
+
+    const rawData = await response.json();
+    
+    // Transform the raw ChatGPT API response to our format
+    return transformChatGPTResponse(rawData);
+  };
+
+  const loadAllImages = async (reset = false) => {
     if (!apiToken) {
       setImages([]);
       return;
     }
 
+    // Emit loading start event
+    globalThis.dispatchEvent(new CustomEvent("loadingStart"));
+    
     setLoading(true);
     setError(null);
 
-    try {
-      const url = new URL("/api/images", globalThis.location.origin);
-      // Remove limit parameter to fetch all images
-
-      const headers: Record<string, string> = {
-        "x-api-token": apiToken,
-      };
-
-      // Only add team header if it's not "personal"
-      if (teamId && teamId !== "personal") {
-        headers["x-team-id"] = teamId;
-      }
-
-      const response = await fetch(url.toString(), { headers });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({
-          error: "Unknown API error",
-        }));
-        throw new Error(errorData.error || `API Error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // Always reset since we're fetching all images
-      setImages(data.items || []);
-
-      // Since we fetch all images, there's no more pagination needed
+    if (reset) {
       setCursor(null);
-      setHasMore(false);
+      setHasMore(true);
+      setImages([]);
+      setLoadingStats({ totalBatches: 0, totalImages: 0, failedBatches: 0 });
+    }
+
+    try {
+      const allImages: ImageItem[] = reset ? [] : [...images];
+      let currentCursor = reset ? null : cursor;
+      let batchCount = 0;
+      let failedCount = 0;
+      let consecutiveEmptyBatches = 0;
+      const maxBatches = 100;
+      const maxRetries = 3;
+      const maxConsecutiveEmpty = 2;
+
+      while (batchCount < maxBatches && (reset || hasMore)) {
+        let retryCount = 0;
+        let batchSuccess = false;
+        let currentBatch: GalleryResponse | null = null;
+
+        // Emit progress update
+        globalThis.dispatchEvent(new CustomEvent("progressUpdate", {
+          detail: {
+            isLoading: true,
+            totalBatches: batchCount,
+            totalImages: allImages.length,
+            failedBatches: failedCount,
+            currentStatus: `正在加载第 ${batchCount + 1} 批图像...`
+          }
+        }));
+
+        while (retryCount < maxRetries && !batchSuccess) {
+          try {
+            currentBatch = await fetchSingleBatch(currentCursor || undefined, batchSize);
+            batchSuccess = true;
+            consecutiveEmptyBatches = 0;
+            
+          } catch (error) {
+            retryCount++;
+            console.warn(`Batch ${batchCount + 1} attempt ${retryCount} failed:`, error);
+            
+            if (retryCount < maxRetries) {
+              await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+            } else {
+              failedCount++;
+              console.error(`Batch ${batchCount + 1} failed after ${maxRetries} retries`);
+              
+              if (allImages.length > 0) {
+                console.warn(`Continuing with ${allImages.length} images despite failed batch`);
+                setHasMore(false);
+                break;
+              } else {
+                throw error;
+              }
+            }
+          }
+        }
+
+        if (!batchSuccess && allImages.length === 0) {
+          throw new Error("Failed to fetch any batches");
+        }
+
+        if (!batchSuccess) {
+          break;
+        }
+
+        if (currentBatch) {
+          batchCount++;
+
+          if (!currentBatch.items || currentBatch.items.length === 0) {
+            consecutiveEmptyBatches++;
+            console.log(`Empty batch ${batchCount}, consecutive empty: ${consecutiveEmptyBatches}`);
+            
+            if (consecutiveEmptyBatches >= maxConsecutiveEmpty) {
+              console.log("Reached end of images (consecutive empty batches)");
+              setHasMore(false);
+              setCursor(null);
+              break;
+            }
+          } else {
+            const newImages = currentBatch.items.filter(
+              newImg => !allImages.some(existingImg => existingImg.id === newImg.id)
+            );
+            
+            if (newImages.length === 0 && currentBatch.items.length > 0) {
+              consecutiveEmptyBatches++;
+              console.log("No new images after deduplication");
+            } else {
+              allImages.push(...newImages);
+              consecutiveEmptyBatches = 0;
+            }
+          }
+
+          const newStats = {
+            totalBatches: batchCount,
+            totalImages: allImages.length,
+            failedBatches: failedCount
+          };
+          
+          setLoadingStats(newStats);
+          setImages([...allImages]);
+
+          // Emit progress update with current stats
+          globalThis.dispatchEvent(new CustomEvent("progressUpdate", {
+            detail: {
+              isLoading: true,
+              ...newStats,
+              currentStatus: `已加载 ${allImages.length} 张图像 (${batchCount} 批次)`
+            }
+          }));
+
+          if (!currentBatch.cursor) {
+            console.log("No cursor returned, reached end of images");
+            setHasMore(false);
+            setCursor(null);
+            break;
+          }
+          
+          currentCursor = currentBatch.cursor;
+          setCursor(currentCursor);
+          
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+      
+      if (batchCount >= maxBatches) {
+        console.warn(`Reached maximum batch limit (${maxBatches}), loaded ${allImages.length} images`);
+        setHasMore(false);
+      }
+
+      setImages(allImages);
+
     } catch (error) {
       console.error("加载图像时出错:", error);
       setError((error as Error).message || "加载图像失败");
+      setHasMore(false);
     } finally {
       setLoading(false);
+      // Emit loading complete event
+      globalThis.dispatchEvent(new CustomEvent("loadingComplete"));
     }
   };
-
-
 
   const openModal = (image: ImageItem) => {
     console.log("Opening modal for image:", image.id);
@@ -125,14 +286,29 @@ export default function ImageGallery() {
     setIsModalOpen(true);
   };
 
+  const handleDownload = async () => {
+    if (!currentModalImage?.src) return;
+    try {
+      const response = await fetch(currentModalImage.src);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = currentModalImage.alt || "image.jpg";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("下载失败:", error);
+    }
+  };
+
   useEffect(() => {
     // Listen for settings changes
     const handleSettingsSaved = () => {
       console.log("设置已保存，重新加载图像...");
-      setCursor(null);
-      setHasMore(true);
-      setError(null);
-      loadImages();
+      loadAllImages(true);
     };
 
     const handleDataCleared = () => {
@@ -140,8 +316,9 @@ export default function ImageGallery() {
       setImages([]);
       setCursor(null);
       setHasMore(true);
+      setLoadingStats({ totalBatches: 0, totalImages: 0, failedBatches: 0 });
       if (apiToken) {
-        loadImages();
+        loadAllImages(true);
       }
     };
 
@@ -150,14 +327,14 @@ export default function ImageGallery() {
 
     // Initial load
     if (apiToken) {
-      loadImages();
+      loadAllImages(true);
     }
 
     return () => {
       globalThis.removeEventListener("settingsSaved", handleSettingsSaved);
       globalThis.removeEventListener("dataCleared", handleDataCleared);
     };
-  }, [apiToken, teamId]);
+  }, [apiToken, teamId, batchSize]);
 
   if (error) {
     return (
@@ -165,14 +342,25 @@ export default function ImageGallery() {
         <p class="text-red-800 dark:text-red-200 font-medium mb-2">
           加载图像时出错
         </p>
-        <p class="text-red-600 dark:text-red-400 text-sm mb-4">{error}</p>{" "}
-        <button
-          type="button"
-          onClick={() => loadImages()}
-          class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
-        >
-          重试
-        </button>
+        <p class="text-red-600 dark:text-red-400 text-sm mb-4">{error}</p>
+        <div class="space-x-4">
+          <button
+            type="button"
+            onClick={() => loadAllImages(true)}
+            class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
+          >
+            重新开始
+          </button>
+          {cursor && (
+            <button
+              type="button"
+              onClick={() => loadAllImages(false)}
+              class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+            >
+              继续加载
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -187,48 +375,57 @@ export default function ImageGallery() {
 
   return (
     <>
-      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-        {images.map((image) => (
-          <div
-            key={image.id}
-            class="bg-white dark:bg-gray-800 rounded-lg overflow-hidden shadow-md"
-          >
-            <div
-              class="w-full aspect-[3/4] flex items-center justify-center overflow-hidden rounded cursor-pointer"
-              onClick={() => openModal(image)}
-            >
-              <img
-                src={getProxyUrl(image.encodings.thumbnail.path || image.url)}
-                alt={image.title || "无标题图像"}
-                class="w-full h-full object-cover"
-                loading="lazy"
-              />
+      {/* Add top padding to account for progress bar */}
+      <div class="pt-20">
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+          {images.map((image) => (
+            <GalleryItem
+              key={image.id}
+              image={image}
+              onImageClick={openModal}
+              getProxyUrl={getProxyUrl}
+            />
+          ))}
+        </div>
+
+        {loading && (
+          <div class="col-span-full text-center py-8">
+            <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent">
             </div>
-            <div class="p-4">
-              <h3 class="font-medium text-gray-800 dark:text-gray-200 mb-1 truncate">
-                {image.title || "无标题图像"}
-              </h3>
-              <p class="text-sm text-gray-500 dark:text-gray-400">
-                {formatDate(image.created_at)}
+            <div class="mt-4 space-y-2">
+              <p class="text-gray-600 dark:text-gray-400">正在加载图像...</p>
+              {loadingStats.totalBatches > 0 && (
+                <div class="text-sm text-gray-500 dark:text-gray-500">
+                  <p>已处理批次: {loadingStats.totalBatches} | 已加载图像: {loadingStats.totalImages}</p>
+                  {loadingStats.failedBatches > 0 && (
+                    <p class="text-orange-600">失败批次: {loadingStats.failedBatches}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {images.length > 0 && !loading && (
+          <div class="col-span-full text-center py-4 text-gray-600 dark:text-gray-400">
+            <p>{images.length} 张图像已加载</p>
+            {loadingStats.failedBatches > 0 && (
+              <p class="text-orange-600 text-sm mt-1">
+                {loadingStats.failedBatches} 个批次加载失败
               </p>
-            </div>
+            )}
+            {hasMore && (
+              <button
+                type="button"
+                onClick={() => loadAllImages(false)}
+                class="mt-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+              >
+                加载更多
+              </button>
+            )}
           </div>
-        ))}
+        )}
       </div>
-
-      {loading && (
-        <div class="col-span-full text-center py-8">
-          <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent">
-          </div>
-          <p class="mt-2 text-gray-600 dark:text-gray-400">正在加载图像...</p>
-        </div>
-      )}
-
-      {images.length > 0 && !loading && (
-        <div class="col-span-full text-center py-4 text-gray-600 dark:text-gray-400">
-          <p>{images.length} 张图像已全部加载</p>
-        </div>
-      )}
 
       <ImageModal 
         metadata={selectedImageMetadata}
@@ -238,23 +435,7 @@ export default function ImageGallery() {
           setCurrentModalImage(null);
           setSelectedImageMetadata(null);
         }}
-        onDownload={async () => {
-          if (!currentModalImage?.src) return;
-          try {
-            const response = await fetch(currentModalImage.src);
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = currentModalImage.alt || "image.jpg";
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          } catch (error) {
-            console.error("下载失败:", error);
-          }
-        }}
+        onDownload={handleDownload}
         currentImage={currentModalImage}
       />
     </>

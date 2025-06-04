@@ -10,6 +10,7 @@ import * as $api_proxy from "./routes/api/proxy.ts";
 import * as $index from "./routes/index.tsx";
 import * as $ImageGallery from "./islands/ImageGallery.tsx";
 import * as $ImageModal from "./islands/ImageModal.tsx";
+import * as $ProgressBar from "./islands/ProgressBar.tsx";
 import * as $SettingsForm from "./islands/SettingsForm.tsx";
 import * as $ThemeProvider from "./islands/ThemeProvider.tsx";
 import * as $ThemeToggle from "./islands/ThemeToggle.tsx";
@@ -28,6 +29,7 @@ const manifest = {
   islands: {
     "./islands/ImageGallery.tsx": $ImageGallery,
     "./islands/ImageModal.tsx": $ImageModal,
+    "./islands/ProgressBar.tsx": $ProgressBar,
     "./islands/SettingsForm.tsx": $SettingsForm,
     "./islands/ThemeProvider.tsx": $ThemeProvider,
     "./islands/ThemeToggle.tsx": $ThemeToggle,

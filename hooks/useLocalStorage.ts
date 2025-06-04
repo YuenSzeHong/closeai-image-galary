@@ -1,5 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 
+// This file is optimal for simple settings storage
+
 export function useLocalStorage<T>(
   key: string,
   defaultValue: T,

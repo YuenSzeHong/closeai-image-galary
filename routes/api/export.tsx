@@ -30,8 +30,12 @@ async function fetchAllImageMetadata(
   const allImages: ImageItem[] = [];
   let cursor: string | null = null;
   let hasMore = true;
+  let batchCount = 0;
+  let consecutiveEmptyBatches = 0;
+  const maxBatches = 200; // Higher limit for export
+  const maxConsecutiveEmpty = 3;
 
-  while (hasMore) {
+  while (hasMore && batchCount < maxBatches) {
     const targetUrl = new URL(
       "https://chatgpt.com/backend-api/my/recent/image_gen",
     );
@@ -56,27 +60,60 @@ async function fetchAllImageMetadata(
         `ChatGPT API 错误: ${response.status} ${response.statusText}`,
       );
     }
+    
     const data = await response.json();
-    if (data.items && data.items.length > 0) {
-      allImages.push(...data.items.map((item: {
-        id: string;
-        url: string;
-        title?: string;
-        created_at: number;
-        width: number;
-        height: number;
-      }) => ({
-        id: item.id,
-        url: item.url,
-        title: item.title || "无标题图像",
-        created_at: item.created_at,
-        width: item.width,
-        height: item.height,
-      })));
+    batchCount++;
+    
+    // Validate response
+    if (!Array.isArray(data.items)) {
+      data.items = [];
+    }
+    
+    if (data.items.length === 0) {
+      consecutiveEmptyBatches++;
+      console.log(`Export: Empty batch ${batchCount}, consecutive: ${consecutiveEmptyBatches}`);
+      
+      if (consecutiveEmptyBatches >= maxConsecutiveEmpty) {
+        console.log("Export: Reached end of images (consecutive empty batches)");
+        break;
+      }
+    } else {
+      consecutiveEmptyBatches = 0;
+      
+      // Filter duplicates and add new images
+      const newImages = data.items
+        .map((item: {
+          id: string;
+          url: string;
+          title?: string;
+          created_at: number;
+          width: number;
+          height: number;
+        }) => ({
+          id: item.id,
+          url: item.url,
+          title: item.title || "无标题图像",
+          created_at: item.created_at,
+          width: item.width,
+          height: item.height,
+        }))
+        .filter(newImg => !allImages.some(existing => existing.id === newImg.id));
+      
+      allImages.push(...newImages);
     }
 
     cursor = data.cursor;
-    hasMore = !!cursor;
+    if (!cursor) {
+      console.log("Export: No cursor returned, reached end");
+      hasMore = false;
+    }
+    
+    // Small delay between requests
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  if (batchCount >= maxBatches) {
+    console.warn(`Export: Reached maximum batch limit (${maxBatches})`);
   }
 
   return allImages;

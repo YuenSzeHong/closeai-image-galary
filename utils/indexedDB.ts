@@ -2,27 +2,16 @@ import { DBSchema, IDBPDatabase, openDB } from "idb";
 
 interface ImageMetadata {
   id: string;
+  title: string;
   url: string;
-  originalUrl?: string;
+  urlExpiry?: Date;
   width: number;
   height: number;
-  title: string;
   created_at: number;
-  metadata?: Record<string, unknown>;
-  encodings: {
-    thumbnail: {
-      path: string;
-      originalPath?: string;
-      blobUrl?: string;
-    };
-  };
-  lastUpdated: number;
-}
-
-interface UserSettings {
-  id: "userTeams";
-  teamIds: string[];
-  lastUpdated: number;
+  conversation_id?: string;
+  message_id?: string;
+  tags: string[];
+  isUrlValid: boolean;
 }
 
 interface TeamInfo {
@@ -36,11 +25,7 @@ interface TeamInfo {
 }
 
 interface ChatGPTGalleryDB extends DBSchema {
-  // Settings and team management
-  settings: {
-    key: string;
-    value: UserSettings;
-  };
+  // Remove settings store - use localStorage instead
   teams: {
     key: string;
     value: TeamInfo;
@@ -55,17 +40,14 @@ interface ChatGPTGalleryDB extends DBSchema {
 class ImageMetadataDB {
   private db: IDBPDatabase<ChatGPTGalleryDB> | null = null;
   private readonly dbName = "ChatGPTGallery";
-  private readonly version = 5; // Incremented for metadata tracking
+  private readonly version = 6; // Incremented to remove settings store
 
   async init(): Promise<void> {
     if (this.db) return;
 
     this.db = await openDB<ChatGPTGalleryDB>(this.dbName, this.version, {
       upgrade(db, oldVersion, newVersion, transaction) {
-        // Handle settings store
-        if (!db.objectStoreNames.contains("settings")) {
-          db.createObjectStore("settings", { keyPath: "id" });
-        }
+        // Remove settings store creation
 
         // Handle teams store
         if (!db.objectStoreNames.contains("teams")) {
@@ -77,44 +59,26 @@ class ImageMetadataDB {
         if (oldVersion < 4 && newVersion >= 4) {
           // Migrate old images table if it exists
           if (db.objectStoreNames.contains("images")) {
-            const oldImagesStore = transaction.objectStore("images");
-            const teamDataMap = new Map<string, ImageMetadata[]>();
+            // Note: Migration will be handled after upgrade completes
+            // Can't perform async operations during upgrade callback
+            console.log("Old images table detected - will clean up on next access");
+          }
+        }
 
-            oldImagesStore.openCursor().then(function migrateCursor(cursor) {
-              if (!cursor) {
-                // After processing all images, create team tables
-                for (const [teamId, images] of teamDataMap) {
-                  const teamTableName = `team_${this.sanitizeTeamId(teamId)}`;
-                  if (!db.objectStoreNames.contains(teamTableName)) {
-                    const teamStore = db.createObjectStore(teamTableName, {
-                      keyPath: "id",
-                    });
-                    teamStore.createIndex("by-created", "created_at");
-                  }
-                }
-                return;
-              }
+        // Migration from v4 to v5: Add metadata tracking fields
+        if (oldVersion < 5 && newVersion >= 5) {
+          // Update existing team records to include metadata tracking
+          if (db.objectStoreNames.contains("teams")) {
+            // This will be handled by updateTeamInfo method calls
+            console.log("Upgrading teams table for metadata tracking");
+          }
+        }
 
-              const image = cursor.value as ImageMetadata;
-              const teamId = image.teamId || "personal";
-
-              if (!teamDataMap.has(teamId)) {
-                teamDataMap.set(teamId, []);
-              }
-              teamDataMap.get(teamId)!.push(image);
-
-              return cursor.continue().then(migrateCursor);
-            });
-
-            // Schedule deletion of old images table after migration
-            setTimeout(() => {
-              if (db.objectStoreNames.contains("images")) {
-                // Note: Can't delete stores during upgrade, will clean up on next version bump
-                console.log(
-                  "Migration completed. Old images table will be cleaned up in next version.",
-                );
-              }
-            }, 1000);
+        // Migration from v5 to v6: Remove settings store
+        if (oldVersion < 6 && newVersion >= 6) {
+          if (db.objectStoreNames.contains("settings")) {
+            db.deleteObjectStore("settings");
+            console.log("Removed settings store - using localStorage instead");
           }
         }
       },
@@ -142,9 +106,6 @@ class ImageMetadataDB {
       this.db = await openDB<ChatGPTGalleryDB>(this.dbName, newVersion, {
         upgrade(db, oldVersion, newVersion, transaction) {
           // Recreate existing stores if needed
-          if (!db.objectStoreNames.contains("settings")) {
-            db.createObjectStore("settings", { keyPath: "id" });
-          }
           if (!db.objectStoreNames.contains("teams")) {
             const teamsStore = db.createObjectStore("teams", { keyPath: "id" });
             teamsStore.createIndex("by-lastSync", "lastSync");
@@ -299,29 +260,6 @@ class ImageMetadataDB {
   async getTeamInfo(teamId: string): Promise<TeamInfo | undefined> {
     await this.init();
     return this.db!.get("teams", teamId);
-  }
-
-  async saveUserTeamIds(teamIds: string[]): Promise<void> {
-    await this.init();
-    await this.db!.put("settings", {
-      id: "userTeams",
-      teamIds,
-      lastUpdated: Date.now(),
-    });
-
-    // Ensure team info exists for all teams
-    for (const teamId of teamIds) {
-      const existing = await this.getTeamInfo(teamId);
-      if (!existing) {
-        await this.updateTeamInfo(teamId);
-      }
-    }
-  }
-
-  async getUserTeamIds(): Promise<string[]> {
-    await this.init();
-    const settings = await this.db!.get("settings", "userTeams");
-    return settings?.teamIds || ["personal"];
   }
 
   async getImageCount(teamIds?: string[]): Promise<number> {
