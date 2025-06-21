@@ -1,35 +1,35 @@
 import { useEffect, useState } from "preact/hooks";
 
-// This file is optimal for simple settings storage
-
 export function useLocalStorage<T>(
   key: string,
   defaultValue: T,
 ): [T, (value: T | ((prev: T) => T)) => void, () => void] {
-  const [value, setValue] = useState<T>(defaultValue);
-
-  useEffect(() => {
+  const [value, setValue] = useState<T>(() => {
     try {
       const item = localStorage.getItem(key);
-      if (item !== null) {
-        setValue(JSON.parse(item));
+      if (item === null) {
+        return defaultValue;
+      }
+      try {
+        return JSON.parse(item);
+      } catch {
+        return item as T;
       }
     } catch (error) {
       console.warn(`Error reading localStorage key "${key}":`, error);
+      return defaultValue;
     }
-  }, [key]);
+  });
 
-  const setStoredValue = (newValue: T | ((prev: T) => T)) => {
+  useEffect(() => {
     try {
-      const valueToStore = newValue instanceof Function
-        ? newValue(value)
-        : newValue;
-      setValue(valueToStore);
-      localStorage.setItem(key, JSON.stringify(valueToStore));
+      const valueToStore =
+        typeof value === "string" ? value : JSON.stringify(value);
+      localStorage.setItem(key, valueToStore);
     } catch (error) {
       console.warn(`Error setting localStorage key "${key}":`, error);
     }
-  };
+  }, [key, value]);
 
   const removeStoredValue = () => {
     try {
@@ -40,5 +40,5 @@ export function useLocalStorage<T>(
     }
   };
 
-  return [value, setStoredValue, removeStoredValue];
+  return [value, setValue, removeStoredValue];
 }

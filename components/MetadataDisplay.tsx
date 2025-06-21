@@ -8,7 +8,9 @@ export default function MetadataDisplay({ metadata }: MetadataDisplayProps) {
     if (typeof value === "boolean") return value ? "是" : "否";
     if (typeof value === "number") {
       // Handle timestamps
-      if (typeof value === "number" && value > 1000000000 && value < 10000000000) {
+      if (
+        typeof value === "number" && value > 1000000000 && value < 10000000000
+      ) {
         return new Date(value * 1000).toLocaleString();
       }
       return value.toString();
@@ -27,9 +29,12 @@ export default function MetadataDisplay({ metadata }: MetadataDisplayProps) {
     return String(value);
   };
 
-  const renderMetadataField = (field: { key: string; label: string; value: unknown }) => {
+  const renderMetadataField = (
+    field: { key: string; label: string; value: unknown },
+  ) => {
     const formattedValue = formatValue(field.value);
-    const isUrl = typeof field.value === "string" && field.value.startsWith("http");
+    const isUrl = typeof field.value === "string" &&
+      field.value.startsWith("http");
 
     return (
       <div class="border-b border-gray-700 pb-2">
@@ -37,15 +42,17 @@ export default function MetadataDisplay({ metadata }: MetadataDisplayProps) {
           {field.label}
         </div>
         <div class="text-white text-sm break-words">
-          {isUrl ? (
-            <a
-              href={field.value as string}
-              target="_blank"
-              class="text-blue-400 hover:text-blue-300 break-all"
-            >
-              {formattedValue}
-            </a>
-          ) : formattedValue}
+          {isUrl
+            ? (
+              <a
+                href={field.value as string}
+                target="_blank"
+                class="text-blue-400 hover:text-blue-300 break-all"
+              >
+                {formattedValue}
+              </a>
+            )
+            : formattedValue}
         </div>
       </div>
     );
@@ -68,7 +75,11 @@ export default function MetadataDisplay({ metadata }: MetadataDisplayProps) {
           : undefined,
       },
       { key: "source", label: "来源", value: metadata.source },
-      { key: "generation_type", label: "类型", value: metadata.generation_type },
+      {
+        key: "generation_type",
+        label: "类型",
+        value: metadata.generation_type,
+      },
     ].filter((field) =>
       field.value !== undefined && field.value !== null && field.value !== ""
     );

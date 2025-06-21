@@ -2,13 +2,16 @@ import { Head } from "$fresh/runtime.ts";
 import Header from "../components/Header.tsx";
 import ImageGallery from "../islands/ImageGallery.tsx";
 import ProgressBar from "../islands/ProgressBar.tsx";
+import { useTranslation } from "../hooks/useTranslation.ts";
 
 export default function Home() {
+  const { t } = useTranslation();
+
   return (
     <>
       <Head>
-        <title>CloseAI 图库</title>
-        <meta name="description" content="查看您在 ChatGPT 中生成的所有图像" />
+        <title>{t("meta.galleryTitle")}</title>
+        <meta name="description" content={t("meta.galleryDescription")} />
       </Head>
 
       <ProgressBar />
@@ -20,13 +23,6 @@ export default function Home() {
           <div id="galleryContainer">
             <ImageGallery />
           </div>
-        </div>
-
-        <div
-          id="notification"
-          class="fixed top-20 right-5 bg-primary text-white p-4 rounded shadow-lg transform translate-x-full transition-transform duration-300 z-40"
-        >
-          设置保存成功！
         </div>
       </div>
     </>

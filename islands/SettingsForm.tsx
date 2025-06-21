@@ -1,12 +1,16 @@
 import { useState } from "preact/hooks";
 import { useLocalStorage } from "../hooks/useLocalStorage.ts";
+import TeamSelector from "./TeamSelector.tsx";
+import { useTranslation } from "../hooks/useTranslation.ts";
 
 export default function SettingsForm() {
-  const [token, setToken] = useLocalStorage<string>("chatgpt_api_token", "");
+  const { t } = useTranslation();
+  const [token, setToken] = useLocalStorage<string>("chatgpt_access_token", "");
   const [teamId, setTeamId] = useLocalStorage<string>(
     "chatgpt_team_id",
     "personal",
-  );  const [batchSize, setBatchSize] = useLocalStorage<number>(
+  );
+  const [batchSize, setBatchSize] = useLocalStorage<number>(
     "chatgpt_batch_size",
     50,
   );
@@ -28,20 +32,13 @@ export default function SettingsForm() {
   };
 
   const showNotification = (message: string) => {
-    const notification = document.getElementById("notification");
-    if (notification) {
-      notification.textContent = message;
-      notification.classList.remove("translate-x-full");
-      notification.classList.add("translate-x-0");
-      setTimeout(() => {
-        notification.classList.add("translate-x-full");
-        notification.classList.remove("translate-x-0");
-      }, 3000);
+    if (globalThis.showNotification) {
+      globalThis.showNotification(message, "success");
     }
   };
   const handleSaveSettings = () => {
     if (!token.trim()) {
-      showError("请输入有效的访问令牌");
+      showError(t("settings.invalidToken"));
       return;
     }
 
@@ -55,26 +52,31 @@ export default function SettingsForm() {
         : token.trim();
 
       if (cleanToken.length < 10) {
-        throw new Error("令牌长度过短");
-      }      // Save settings
+        throw new Error(t("settings.tokenTooShort"));
+      }
+
+      // Ensure teamId is properly set
+      const finalTeamId = teamId || "personal";
+      console.log("Saving settings with teamId:", finalTeamId);
+
+      // Save settings
       setToken(cleanToken);
-      setTeamId(teamId || "personal");
+      setTeamId(finalTeamId);
       setBatchSize(Math.max(1, Math.min(1000, batchSize)));
 
       // Trigger gallery reload
-      showNotification("设置已保存。正在加载图像...");
+      showNotification(t("settings.settingsSaved"));
       globalThis.dispatchEvent(
         new CustomEvent("settingsSaved", {
-          detail: { token: cleanToken, teamId: teamId || "personal" },
+          detail: { token: cleanToken, teamId: finalTeamId },
         }),
       );
     } catch (error) {
-      showError(error.message || "保存设置失败");
+      showError((error as Error).message || t("settings.saveSettingsFailed"));
     } finally {
       setIsLoading(false);
     }
   };
-
   return (
     <>
       <div class="mb-4">
@@ -82,36 +84,24 @@ export default function SettingsForm() {
           for="tokenInput"
           class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
         >
-          ChatGPT 访问令牌：
-        </label>
+          {t("settings.accessToken")}
+        </label>{" "}
         <input
           type="password"
           id="tokenInput"
-          placeholder="输入您的 ChatGPT 访问令牌"
+          placeholder={t("settings.accessTokenPlaceholder")}
           value={token}
           onInput={(e) => setToken((e.target as HTMLInputElement).value)}
           class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
         />
       </div>
-      <div class="mb-4">
-        <label
-          for="teamIdInput"
-          class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-        >
-          团队 ID（可选）：
-        </label>
-        <input
-          type="text"
-          id="teamIdInput"
-          placeholder="输入团队工作区的团队 ID（个人账户请留空）"
-          value={teamId === "personal" ? "" : teamId}
-          onInput={(e) => {
-            const value = (e.target as HTMLInputElement).value.trim();
-            setTeamId(value || "personal");
-          }}
-          class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
-        />
-      </div>
+
+      <TeamSelector
+        accessToken={token}
+        selectedTeamId={teamId}
+        onTeamChange={setTeamId}
+        className="mb-4"
+      />
       <div class="mb-4 sm:flex sm:items-center sm:gap-4">
         <button
           type="button"
@@ -123,15 +113,17 @@ export default function SettingsForm() {
               : "bg-primary text-white hover:bg-primaryDark"
           }`}
         >
-          {isLoading ? "加载中..." : "保存设置并加载图像"}
+          {isLoading
+            ? t("settings.loadingSettings")
+            : t("settings.saveSettings")}
         </button>
         <div class="flex items-center gap-2">
           <label
             for="batchSizeInput"
             class="text-sm text-gray-700 dark:text-gray-300"
           >
-            API 批次大小：
-          </label>
+            {t("settings.batchSize")}
+          </label>{" "}
           <input
             type="number"
             id="batchSizeInput"
@@ -139,15 +131,15 @@ export default function SettingsForm() {
             max="1000"
             step="1"
             value={batchSize}
-            onInput={(e) =>
-              setBatchSize(
-                parseInt((e.target as HTMLInputElement).value) || 50,
-              )}
+            onInput={(e) => setBatchSize(
+              parseInt((e.target as HTMLInputElement).value) || 50,
+            )}
             class="w-24 p-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
           />
           <span class="text-xs text-gray-400 dark:text-gray-500">
-            （1-1000，用于 API 元数据）
-          </span>        </div>
+            {t("settings.batchSizeHelper")}
+          </span>
+        </div>
       </div>
 
       {/* Quick Export Section */}
@@ -155,22 +147,22 @@ export default function SettingsForm() {
         <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
           <div class="flex items-center justify-between mb-2">
             <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">
-              快速导出
+              {t("settings.quickExport")}
             </h4>
             <a
               href="/settings#export"
               class="text-xs text-blue-600 dark:text-blue-400 hover:underline"
             >
-              查看完整导出选项
+              {t("settings.viewFullExportOptions")}
             </a>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
-            设置保存后，您可以前往{" "}
+            {t("settings.afterSavingSettings")}{" "}
             <a
               href="/settings#export"
               class="text-blue-600 dark:text-blue-400 hover:underline"
             >
-              导出页面
+              {t("export.title")}
             </a>{" "}
             下载所有图像为 ZIP 文件
           </p>

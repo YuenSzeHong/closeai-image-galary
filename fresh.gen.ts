@@ -5,18 +5,19 @@
 import * as $_404 from "./routes/_404.tsx";
 import * as $_app from "./routes/_app.tsx";
 import * as $about from "./routes/about.tsx";
-import * as $api_export from "./routes/api/export.tsx";
-import * as $api_images from "./routes/api/images.ts";
-import * as $api_proxy from "./routes/api/proxy.ts";
+import * as $api_export from "./routes/api/export.ts";
+import * as $api_export_taskId_ from "./routes/api/export/[taskId].ts";
+import * as $api_image from "./routes/api/image.ts";
+import * as $api_proxy_path_ from "./routes/api/proxy/[...path].ts";
 import * as $index from "./routes/index.tsx";
 import * as $settings from "./routes/settings.tsx";
-import * as $ExportStatus from "./islands/ExportStatus.tsx";
+import * as $ExportNotification from "./islands/ExportNotification.tsx";
 import * as $ImageGallery from "./islands/ImageGallery.tsx";
 import * as $ImageModal from "./islands/ImageModal.tsx";
-import * as $KeyboardShortcuts from "./islands/KeyboardShortcuts.tsx";
 import * as $NotificationManager from "./islands/NotificationManager.tsx";
 import * as $ProgressBar from "./islands/ProgressBar.tsx";
 import * as $SettingsForm from "./islands/SettingsForm.tsx";
+import * as $TeamSelector from "./islands/TeamSelector.tsx";
 import * as $ThemeProvider from "./islands/ThemeProvider.tsx";
 import * as $ThemeToggle from "./islands/ThemeToggle.tsx";
 import * as $ZipExport from "./islands/ZipExport.tsx";
@@ -27,20 +28,21 @@ const manifest = {
     "./routes/_404.tsx": $_404,
     "./routes/_app.tsx": $_app,
     "./routes/about.tsx": $about,
-    "./routes/api/export.tsx": $api_export,
-    "./routes/api/images.ts": $api_images,
-    "./routes/api/proxy.ts": $api_proxy,
+    "./routes/api/export.ts": $api_export,
+    "./routes/api/export/[taskId].ts": $api_export_taskId_,
+    "./routes/api/image.ts": $api_image,
+    "./routes/api/proxy/[...path].ts": $api_proxy_path_,
     "./routes/index.tsx": $index,
     "./routes/settings.tsx": $settings,
   },
   islands: {
-    "./islands/ExportStatus.tsx": $ExportStatus,
+    "./islands/ExportNotification.tsx": $ExportNotification,
     "./islands/ImageGallery.tsx": $ImageGallery,
     "./islands/ImageModal.tsx": $ImageModal,
-    "./islands/KeyboardShortcuts.tsx": $KeyboardShortcuts,
     "./islands/NotificationManager.tsx": $NotificationManager,
     "./islands/ProgressBar.tsx": $ProgressBar,
     "./islands/SettingsForm.tsx": $SettingsForm,
+    "./islands/TeamSelector.tsx": $TeamSelector,
     "./islands/ThemeProvider.tsx": $ThemeProvider,
     "./islands/ThemeToggle.tsx": $ThemeToggle,
     "./islands/ZipExport.tsx": $ZipExport,

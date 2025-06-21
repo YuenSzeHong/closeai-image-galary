@@ -1,4 +1,5 @@
-import { useState, useEffect } from "preact/hooks";
+import { useEffect } from "preact/hooks";
+import { useSignal } from "@preact/signals";
 
 interface NotificationProps {
   message: string;
@@ -7,12 +8,13 @@ interface NotificationProps {
   onClose: () => void;
 }
 
-export default function Notification({ message, type, duration = 3000, onClose }: NotificationProps) {
-  const [isVisible, setIsVisible] = useState(true);
-
+export default function Notification(
+  { message, type, duration = 3000, onClose }: NotificationProps,
+) {
+  const isVisible = useSignal(true);
   useEffect(() => {
     const timer = setTimeout(() => {
-      setIsVisible(false);
+      isVisible.value = false;
       setTimeout(onClose, 300); // Wait for animation to complete
     }, duration);
 
@@ -46,7 +48,9 @@ export default function Notification({ message, type, duration = 3000, onClose }
   return (
     <div
       class={`fixed top-4 right-4 z-50 max-w-sm w-full shadow-lg rounded-lg border-l-4 p-4 transition-all duration-300 ${
-        isVisible ? "translate-x-0 opacity-100" : "translate-x-full opacity-0"
+        isVisible.value
+          ? "translate-x-0 opacity-100"
+          : "translate-x-full opacity-0"
       } ${getTypeClasses()}`}
     >
       <div class="flex items-center gap-3">
@@ -55,8 +59,9 @@ export default function Notification({ message, type, duration = 3000, onClose }
           <p class="font-medium">{message}</p>
         </div>
         <button
+          type="button"
           onClick={() => {
-            setIsVisible(false);
+            isVisible.value = false;
             setTimeout(onClose, 300);
           }}
           class="text-white/80 hover:text-white transition-colors"

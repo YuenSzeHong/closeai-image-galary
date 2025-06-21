@@ -1,10 +1,13 @@
 import { Head } from "$fresh/runtime.ts";
+import { useTranslation } from "../hooks/useTranslation.ts";
 
 export default function Error404() {
+  const { t } = useTranslation();
+
   return (
     <>
       <Head>
-        <title>404 - 页面未找到</title>
+        <title>{t("meta.notFoundTitle")}</title>
       </Head>
       <div class="px-4 py-8 mx-auto bg-[#86efac]">
         <div class="max-w-screen-md mx-auto flex flex-col items-center justify-center">
@@ -13,13 +16,13 @@ export default function Error404() {
             src="/logo.svg"
             width="128"
             height="128"
-            alt="Fresh 标志：一片滴着汁水的柠檬片"
+            alt={t("meta.logoAlt")}
           />
-          <h1 class="text-4xl font-bold">404 - 页面未找到</h1>
+          <h1 class="text-4xl font-bold">{t("meta.notFoundHeading")}</h1>
           <p class="my-4">
-            您要查找的页面不存在。
+            {t("meta.notFoundMessage")}
           </p>
-          <a href="/" class="underline">返回首页</a>
+          <a href="/" class="underline">{t("meta.notFoundHome")}</a>
         </div>
       </div>
     </>

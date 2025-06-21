@@ -58,7 +58,7 @@ export default function ImageModal({
         isOpen ? "flex" : "hidden"
       }`}
       onClick={handleModalClick}
-      style={{ display: isOpen ? 'flex' : 'none' }}
+      style={{ display: isOpen ? "flex" : "none" }}
     >
       <div class="relative max-w-[calc(100vw-2rem)] max-h-[calc(100vh-2rem)] w-auto h-auto flex bg-gray-900 rounded-xl overflow-hidden shadow-2xl lg:flex-row flex-col lg:max-w-[95vw] lg:max-h-[95vh]">
         {/* Control buttons */}
@@ -100,46 +100,48 @@ export default function ImageModal({
           id="modalImageContainer"
           class="relative flex items-center justify-center bg-gray-100 dark:bg-gray-800 lg:w-[calc(100vw-450px)] lg:max-w-[calc(100vw-450px)] lg:h-[calc(100vh-4rem)] lg:min-w-[400px] w-full h-[60vh]"
         >
-          {currentImage ? (
-            <>
-              {imageLoading && (
-                <div class="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded animate-pulse flex items-center justify-center">
-                  <div class="text-gray-600 dark:text-gray-400 text-lg font-medium">
-                    加载中...
+          {currentImage
+            ? (
+              <>
+                {imageLoading && (
+                  <div class="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded animate-pulse flex items-center justify-center">
+                    <div class="text-gray-600 dark:text-gray-400 text-lg font-medium">
+                      加载中...
+                    </div>
                   </div>
-                </div>
-              )}
-              {imageError && (
-                <div class="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded flex items-center justify-center">
-                  <div class="text-red-500 text-lg font-medium">
-                    图片加载失败
+                )}
+                {imageError && (
+                  <div class="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded flex items-center justify-center">
+                    <div class="text-red-500 text-lg font-medium">
+                      图片加载失败
+                    </div>
                   </div>
+                )}
+                <img
+                  id="modalImage"
+                  class={`max-w-full max-h-full object-contain transition-opacity duration-300 ${
+                    imageLoading ? "opacity-0" : "opacity-100"
+                  }`}
+                  src={currentImage.src}
+                  alt={currentImage.alt}
+                  onLoad={() => {
+                    setImageLoading(false);
+                    setImageError(false);
+                  }}
+                  onError={() => {
+                    setImageLoading(false);
+                    setImageError(true);
+                  }}
+                />
+              </>
+            )
+            : (
+              <div class="bg-gray-200 dark:bg-gray-800 rounded animate-pulse flex items-center justify-center w-full h-full">
+                <div class="text-gray-600 dark:text-gray-400 text-lg font-medium">
+                  选择图像查看
                 </div>
-              )}
-              <img
-                id="modalImage"
-                class={`max-w-full max-h-full object-contain transition-opacity duration-300 ${
-                  imageLoading ? "opacity-0" : "opacity-100"
-                }`}
-                src={currentImage.src}
-                alt={currentImage.alt}
-                onLoad={() => {
-                  setImageLoading(false);
-                  setImageError(false);
-                }}
-                onError={() => {
-                  setImageLoading(false);
-                  setImageError(true);
-                }}
-              />
-            </>
-          ) : (
-            <div class="bg-gray-200 dark:bg-gray-800 rounded animate-pulse flex items-center justify-center w-full h-full">
-              <div class="text-gray-600 dark:text-gray-400 text-lg font-medium">
-                选择图像查看
               </div>
-            </div>
-          )}
+            )}
         </div>
 
         {/* Metadata Panel */}
@@ -151,7 +153,7 @@ export default function ImageModal({
             <h3 class="text-white text-lg font-semibold mb-4 border-b border-gray-600 pb-2">
               图像元数据
             </h3>
-            <MetadataDisplay metadata={metadata} />
+            <MetadataDisplay metadata={metadata || null} />
           </div>
         </div>
       </div>

@@ -1,24 +1,8 @@
-interface ImageItem {
-  id: string;
-  url: string;
-  originalUrl?: string;
-  width: number;
-  height: number;
-  title: string;
-  created_at: number;
-  metadata?: Record<string, unknown>;
-  encodings: {
-    thumbnail: {
-      path: string;
-      originalPath?: string;
-      blobUrl?: string;
-    };
-  };
-}
+import type { GalleryImageItem } from "../lib/types.ts";
 
 interface GalleryItemProps {
-  image: ImageItem;
-  onImageClick: (image: ImageItem) => void;
+  image: GalleryImageItem;
+  onImageClick: (image: GalleryImageItem) => void;
   getProxyUrl: (url: string) => string;
 }
 
@@ -33,7 +17,9 @@ const formatDate = (timestamp: number) => {
   });
 };
 
-export default function GalleryItem({ image, onImageClick, getProxyUrl }: GalleryItemProps) {
+export default function GalleryItem(
+  { image, onImageClick, getProxyUrl }: GalleryItemProps,
+) {
   return (
     <div class="bg-white dark:bg-gray-800 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-all duration-200 hover:-translate-y-1">
       <div
@@ -49,7 +35,7 @@ export default function GalleryItem({ image, onImageClick, getProxyUrl }: Galler
         />
       </div>
       <div class="p-4">
-        <h3 
+        <h3
           class="font-medium text-gray-800 dark:text-gray-200 mb-1 truncate cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
           onClick={() => onImageClick(image)}
           title={image.title || "无标题图像"}
@@ -68,4 +54,4 @@ export default function GalleryItem({ image, onImageClick, getProxyUrl }: Galler
   );
 }
 
-export type { ImageItem };
+export type { GalleryImageItem };

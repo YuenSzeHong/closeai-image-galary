@@ -4,20 +4,24 @@ interface LoadingSpinnerProps {
   className?: string;
 }
 
-export default function LoadingSpinner({ 
-  size = "md", 
-  text, 
-  className = "" 
+export default function LoadingSpinner({
+  size = "md",
+  text,
+  className = "",
 }: LoadingSpinnerProps) {
   const sizeClasses = {
     sm: "h-4 w-4",
-    md: "h-8 w-8", 
-    lg: "h-12 w-12"
+    md: "h-8 w-8",
+    lg: "h-12 w-12",
   };
 
   return (
     <div class={`text-center ${className}`}>
-      <div class={`inline-block ${sizeClasses[size]} animate-spin rounded-full border-4 border-solid border-primary border-r-transparent`}>
+      <div
+        class={`inline-block ${
+          sizeClasses[size]
+        } animate-spin rounded-full border-4 border-solid border-primary border-r-transparent`}
+      >
       </div>
       {text && (
         <div class="mt-2">
