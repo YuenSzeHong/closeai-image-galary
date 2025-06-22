@@ -1,6 +1,7 @@
 // utils/chatgpt.ts - Simple ChatGPT API utilities
 
-import { createChatGPTClient, type ImageItem } from "../lib/chatgpt-client.ts";
+import { type ImageItem } from "../lib/chatgpt-client.ts";
+import { getCachedClient } from "../utils/metadataUtils.ts";
 
 /**
  * Simple utility to fetch ChatGPT images with sensible defaults
@@ -15,9 +16,9 @@ export function fetchChatGPTImages(
     ) => void;
   },
 ): Promise<ImageItem[]> {
-  const client = createChatGPTClient({
-    accessToken,
+  const client = getCachedClient(accessToken, {
     teamId: options?.teamId,
+    bypassProxy: false // Use proxy for client-side operations
   });
 
   const maxBatches = options?.maxImages
@@ -44,7 +45,9 @@ export function fetchChatGPTImages(
  * Simple utility to get ChatGPT teams/accounts
  */
 export function getChatGPTTeams(accessToken: string) {
-  const client = createChatGPTClient({ accessToken });
+  const client = getCachedClient(accessToken, {
+    bypassProxy: false // Use proxy for client-side operations
+  });
   return client.fetchTeamList();
 }
 
@@ -56,7 +59,10 @@ export async function validateChatGPTToken(
   teamId?: string,
 ): Promise<boolean> {
   try {
-    const client = createChatGPTClient({ accessToken, teamId });
+    const client = getCachedClient(accessToken, {
+      teamId,
+      bypassProxy: false // Use proxy for client-side operations
+    });
     // Try to fetch a small batch to validate the token
     await client.fetchImageBatch({ limit: 1 });
     return true;
@@ -65,9 +71,9 @@ export async function validateChatGPTToken(
   }
 }
 
-// Re-export the client for advanced usage
+// Re-export the client utilities for advanced usage
 export {
   type ChatGPTConfig,
   createChatGPTClient,
-  type ImageItem,
 } from "../lib/chatgpt-client.ts";
+export { getCachedClient } from "../utils/metadataUtils.ts";

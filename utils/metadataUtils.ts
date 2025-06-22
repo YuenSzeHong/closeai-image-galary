@@ -138,14 +138,8 @@ export async function directChatGPTCall<T = unknown>(
   return await response.json() as T;
 }
 
-/**
- * Clean token format (remove "Bearer " prefix if present)
- */
-function cleanToken(token: string): string {
-  return token.startsWith("Bearer ")
-    ? token.substring(7).trim()
-    : token.trim();
-}
+// Use the centralized cleanToken utility from chatgpt-client
+import { cleanToken } from "../lib/chatgpt-client.ts";
 
 /**
  * Example of fetching image metadata directly
@@ -153,7 +147,7 @@ function cleanToken(token: string): string {
  * @param options - Options for the request
  * @returns Image batch response
  */
-export async function fetchImageMetadataDirect(
+export function fetchImageMetadataDirect(
   accessToken: string,
   options: {
     teamId?: string;
@@ -161,11 +155,10 @@ export async function fetchImageMetadataDirect(
     after?: string;
   } = {}
 ) {
-  // Create a client with direct API access (no proxy)
-  const client = createChatGPTClient({
-    accessToken,
+  // Get a cached client with direct API access (no proxy)
+  const client = getCachedClient(accessToken, {
     teamId: options.teamId,
-    useProxy: false // Use direct API calls
+    bypassProxy: true // Use direct API calls
   });
   
   return client.fetchImageBatch({
@@ -174,30 +167,59 @@ export async function fetchImageMetadataDirect(
   });
 }
 
+// Client cache to avoid recreating the same client multiple times
+const clientCache = new Map<string, { client: ChatGPTClient, timestamp: number }>();
+const CLIENT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 /**
- * Example of fetching teams/accounts directly
+ * Get a cached client or create a new one if not in cache
  * @param accessToken - ChatGPT access token
- * @returns Team account list
+ * @param options - Client options
+ * @returns ChatGPT client instance
  */
-export async function fetchTeamsDirect(accessToken: string) {
-  // Create a client with direct API access (no proxy)
+export function getCachedClient(accessToken: string, options: { teamId?: string, bypassProxy?: boolean } = {}) {
+  // Create a cache key based on the configuration
+  const cacheKey = `${accessToken}:${options.teamId || ''}:${options.bypassProxy ? 'direct' : 'proxy'}`;
+  
+  // Check if we have a valid cached client
+  const now = Date.now();
+  const cached = clientCache.get(cacheKey);
+  
+  if (cached && (now - cached.timestamp) < CLIENT_CACHE_TTL) {
+    return cached.client;
+  }
+  
+  // Create a new client
   const client = createChatGPTClient({
     accessToken,
-    useProxy: false // Use direct API calls
+    teamId: options.teamId,
+    bypassProxy: options.bypassProxy
   });
   
-  return client.fetchTeamList();
-}
+  // Cache the client
+  clientCache.set(cacheKey, { client, timestamp: now });
+  
+  // Cleanup old entries occasionally
+  if (clientCache.size > 10) {
+    for (const [key, value] of clientCache.entries()) {
+      if ((now - value.timestamp) > CLIENT_CACHE_TTL) {
+        clientCache.delete(key);
+      }
+    }
+  }
+  
+  return client;
 }
 
 // Add type imports from the existing client
 import type { 
-  ImageBatchResponse,
   ImageItem,
-  TeamAccount,
-  RawImageItem
+  // Unused types commented out to prevent lint warnings
+  // ImageBatchResponse,
+  // TeamAccount,
+  // RawImageItem
 } from "../lib/types.ts";
-import { createChatGPTClient } from "../lib/chatgpt-client.ts";
+import { createChatGPTClient, ChatGPTClient } from "../lib/chatgpt-client.ts";
 
 /**
  * Fetch all image metadata directly without using the proxy
@@ -205,7 +227,7 @@ import { createChatGPTClient } from "../lib/chatgpt-client.ts";
  * @param options - Options for fetching all metadata
  * @returns Array of image items
  */
-export async function fetchAllImageMetadataDirect(
+export function fetchAllImageMetadataDirect(
   accessToken: string,
   options: {
     teamId?: string;
@@ -218,104 +240,11 @@ export async function fetchAllImageMetadataDirect(
     }) => Promise<void>;
   } = {}
 ): Promise<ImageItem[]> {
-  // Create a client with direct API access (no proxy)
-  const client = createChatGPTClient({
-    accessToken,
+  // Get a cached client with direct API access (no proxy)
+  const client = getCachedClient(accessToken, {
     teamId: options.teamId,
-    useProxy: false // Use direct API calls
+    bypassProxy: true // Use direct API calls
   });
   
   return client.fetchAllImageMetadata(options);
-}
-
-  while (batchCount < maxBatches) {
-    try {
-      const data = await fetchImageMetadataDirect(accessToken, {
-        teamId,
-        after: cursor || undefined,
-        limit: 100, // Use reasonable batch size
-      });
-
-      batchCount++;
-
-      if (!data.items || data.items.length === 0) {
-        consecutiveEmptyBatches++;
-        if (consecutiveEmptyBatches >= maxConsecutiveEmpty || !data.cursor) {
-          console.log(
-            `[Meta Direct] No more items or consecutive empty. Batches: ${batchCount}`,
-          );
-          break;
-        }
-      } else {
-        consecutiveEmptyBatches = 0;
-        const newImages = data.items
-          .map((item: RawImageItem): ImageItem | null => {
-            if (!item.id || !item.url || !item.created_at) return null;
-            return {
-              id: item.id,
-              url: item.url,
-              title: item.title || "",
-              created_at: item.created_at,
-              width: item.width || 0,
-              height: item.height || 0,
-            };
-          })
-          .filter((item): item is ImageItem => item !== null);
-
-        allImages.push(...newImages);
-        totalImagesFound += newImages.length;
-
-        console.log(
-          `[Meta Direct] Batch ${batchCount}: Found ${newImages.length} images. Total: ${totalImagesFound}`,
-        );
-      }
-
-      cursor = data.cursor || null;
-      if (!cursor) {
-        console.log(
-          `[Meta Direct] No more cursor. Stopping. Batches: ${batchCount}`,
-        );
-        break;
-      }
-
-      // Report progress
-      if (onProgress) {
-        await onProgress({
-          currentBatch: batchCount,
-          totalImages: totalImagesFound,
-          progress: Math.min((batchCount / maxBatches) * 100, 100),
-        });
-      }
-
-      // Rate limiting - wait between requests
-      if (batchCount % 10 === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-    } catch (error) {
-      // Handle rate limiting
-      if (error instanceof Error) {
-        const status = error.message.includes("429") ? 429 : 
-                      error.message.includes("403") ? 403 : 0;
-        
-        if (status === 429 || status === 403) {
-          const waitTime = status === 429
-            ? (Math.random() * 3000 + 5000)
-            : (Math.random() * 5000 + 10000);
-          console.warn(
-            `[Meta Direct] API limit (${status}). Waiting ${
-              (waitTime / 1000).toFixed(1)
-            }s... Batch: ${batchCount + 1}`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
-          continue;
-        }
-      }
-
-      console.error(`[Meta Direct] Batch ${batchCount + 1} failed:`, error);
-      throw error;
-    }
-  }
-
-  console.log(`[Meta Direct] Fetched ${allImages.length} image metadata items.`);
-  return allImages;
 }

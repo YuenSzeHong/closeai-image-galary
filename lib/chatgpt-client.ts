@@ -1,6 +1,7 @@
 // lib/chatgpt-client.ts - ChatGPT API Client Library
 
 import { z } from "zod";
+import { directChatGPTCall } from "../utils/metadataUtils.ts";
 import type {
   ImageBatchResponse,
   ImageItem,
@@ -20,7 +21,7 @@ export interface ChatGPTConfig {
   teamId?: string;
   userAgent?: string;
   timeout?: number;
-  useProxy?: boolean; // Add option to use proxy or direct API calls
+  bypassProxy?: boolean; // When true, bypass the proxy and call ChatGPT API directly
 }
 
 export interface ChatGPTRequestOptions {
@@ -88,7 +89,7 @@ export class ChatGPTClient {
     accessToken: string;
     userAgent: string;
     timeout: number;
-    useProxy: boolean;
+    bypassProxy: boolean;
   };
 
   constructor(config: ChatGPTConfig) {
@@ -98,12 +99,80 @@ export class ChatGPTClient {
     }
 
     this.config = {
-      accessToken: this.cleanToken(config.accessToken),
-      teamId: config.teamId,
+      ...config,
+      accessToken: cleanToken(config.accessToken),
       userAgent: config.userAgent || DEFAULT_USER_AGENT,
-      timeout: config.timeout || 25000,
-      useProxy: config.useProxy !== false, // default to true if not specified
+      timeout: config.timeout || 60000,
+      bypassProxy: config.bypassProxy ?? false, // Default to using proxy unless explicitly set to bypass
     };
+  }
+
+  private getBaseUrl(): string {
+    return this.config.bypassProxy ? CHATGPT_BASE_URL : CHATGPT_PROXY_BASE_URL;
+  }
+
+  private async fetchRequest<T>(
+    path: string,
+    options: {
+      method?: "GET" | "POST" | "PUT" | "DELETE";
+      body?: unknown;
+      teamId?: string;
+      timeout?: number;
+    } = {},
+  ): Promise<T> {
+    const {
+      method = "GET",
+      body,
+      teamId = this.config.teamId,
+      timeout = this.config.timeout,
+    } = options;
+
+    if (this.config.bypassProxy) {
+      // Use centralized direct API call implementation
+      return directChatGPTCall<T>(path, {
+        method,
+        accessToken: this.config.accessToken,
+        teamId,
+        body,
+      });
+    }
+
+    // Proxy implementation remains the same
+    const headers: HeadersInit = {
+      "x-access-token": this.config.accessToken,
+      ...(teamId && { "x-team-id": teamId }),
+    };
+
+    if (body) {
+      headers["Content-Type"] = "application/json";
+    }
+
+    const url = `${this.getBaseUrl()}/${path.replace(/^\//, "")}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    try {
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new ChatGPTApiError(
+          `API request failed: ${response.status} ${response.statusText}`,
+          response.status,
+          response.status === 403,
+          response.status === 401,
+          response.status === 429,
+        );
+      }
+
+      return (await response.json()) as T;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /**
@@ -161,12 +230,10 @@ export class ChatGPTClient {
   ): Promise<ImageBatchResponse> {
     const { after, limit = 50, metadataOnly = false, timeout } = options;
     const requestTimeout = timeout || this.config.timeout;
-    
+
     // Create URL and params based on whether we're using proxy or direct API
     let targetUrl: URL;
-    let headers: HeadersInit;
-    
-    if (this.config.useProxy) {
+    let headers: HeadersInit;    if (!this.config.bypassProxy) {
       // Use proxy route
       const baseUrl = globalThis.location?.origin || "http://localhost:8000";
       targetUrl = new URL(
@@ -178,22 +245,22 @@ export class ChatGPTClient {
       // Direct API call
       targetUrl = new URL(`${CHATGPT_BASE_URL}/my/recent/image_gen`);
       headers = {
-        "accept": "*/*",
-        "authorization": "Bearer " + this.config.accessToken,
+        accept: "*/*",
+        authorization: "Bearer " + this.config.accessToken,
         "cache-control": "no-cache",
         "user-agent": this.config.userAgent,
         "accept-encoding": "gzip, deflate, br",
         "accept-language": "en-US,en;q=0.9",
-        "connection": "keep-alive",
+        connection: "keep-alive",
       };
-      
+
       // Add team ID if provided and not "personal"
       const teamId = options?.teamId || this.config.teamId;
       if (teamId && teamId.trim() !== "" && teamId.trim() !== "personal") {
         headers["chatgpt-account-id"] = teamId.trim();
       }
     }
-    
+
     // Add common query parameters
     targetUrl.searchParams.set(
       "limit",
@@ -240,9 +307,7 @@ export class ChatGPTClient {
    */
   async fetchTeamList(): Promise<TeamAccount[]> {
     let targetUrl: URL;
-    let headers: HeadersInit;
-
-    if (this.config.useProxy) {
+    let headers: HeadersInit;    if (!this.config.bypassProxy) {
       // Use proxy route
       const baseUrl = globalThis.location?.origin || "http://localhost:8000";
       targetUrl = new URL(
@@ -254,13 +319,13 @@ export class ChatGPTClient {
       // Direct API call
       targetUrl = new URL(`${CHATGPT_BASE_URL}/accounts/check/v4-2023-04-27`);
       headers = {
-        "accept": "*/*",
-        "authorization": "Bearer " + this.config.accessToken,
+        accept: "*/*",
+        authorization: "Bearer " + this.config.accessToken,
         "cache-control": "no-cache",
         "user-agent": this.config.userAgent,
         "accept-encoding": "gzip, deflate, br",
         "accept-language": "en-US,en;q=0.9",
-        "connection": "keep-alive",
+        connection: "keep-alive",
       };
     }
 

@@ -357,10 +357,11 @@ async function fetchAllImageMetadata(
       totalImages?: number;
     },
   ) => Promise<void>,
-): Promise<ImageItem[]> {  const client = createChatGPTClient({ 
+): Promise<ImageItem[]> {
+  const client = createChatGPTClient({ 
     accessToken, 
     teamId,
-    useProxy: false // Use direct API calls for backend operations
+    useProxy: false // Force direct API calls for backend operations
   });
 
   console.log(`[Meta] Starting metadata fetch for teamId: ${teamId || "personal"}`);
@@ -375,10 +376,8 @@ async function fetchAllImageMetadata(
   try {
     const allImages = await client.fetchAllImageMetadata({
       teamId,
-      maxBatches: 200,
-      maxConsecutiveEmpty: 3,
-      onProgress: async (progress) => {
-        await updateStage({
+      onProgress: (progress) => {
+        return updateStage({
           status: "running",
           progress: progress.progress,
           currentBatch: progress.currentBatch,

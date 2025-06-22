@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import { useLocalStorage } from "../hooks/useLocalStorage.ts";
 import TeamSelector from "./TeamSelector.tsx";
+import { cleanToken } from "../lib/chatgpt-client.ts";
 
 export default function SettingsForm() {
   
@@ -42,15 +43,11 @@ export default function SettingsForm() {
     }
 
     hideError();
-    setIsLoading(true);
+    setIsLoading(true);    try {
+      // Validate token using the centralized cleanToken utility
+      const cleanedToken = cleanToken(token);
 
-    try {
-      // Validate token format
-      const cleanToken = token.startsWith("Bearer ")
-        ? token.substring(7).trim()
-        : token.trim();
-
-      if (cleanToken.length < 10) {
+      if (cleanedToken.length < 10) {
         throw new Error("令牌长度过短");
       }
 
