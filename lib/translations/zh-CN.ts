@@ -211,10 +211,10 @@ export const zhCN: TranslationKeys = {
   },
 
   theme: {
-    toggleTheme: "切换主题",
-    lightMode: "浅色模式",
-    darkMode: "深色模式",
-    systemMode: "跟随系统",
+    toggle: "切换主题（亮色/暗色/系统）",
+    light: "亮色模式",
+    dark: "暗色模式",
+    system: "系统主题",
   },
   language: {
     selectLanguage: "选择语言",

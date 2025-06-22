@@ -511,7 +511,7 @@ export default function ImageGallery() {
 
         {loading && (
           <div class="col-span-full text-center py-8">
-            <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent">
+            <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary-500 border-r-transparent">
             </div>
             <div class="mt-4 space-y-2">
               <p class="text-gray-600 dark:text-gray-400">正在加载图像...</p>

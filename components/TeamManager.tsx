@@ -397,36 +397,34 @@ export default function ZipExport() {
   };
 
   const getStateColor = () => {
-    switch (clientState) {
-      case "checking_existing":
+    switch (clientState) {      case "checking_existing":
       case "preparing_metadata":
       case "downloading":
-        return "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900";
+        return "border-blue-200 bg-blue-100/50 dark:border-blue-800/30 dark:bg-blue-900/20";
       case "existing_found":
       case "metadata_ready":
-        return "border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900";
+        return "border-primary/30 bg-primary-100/50 dark:border-primary/30 dark:bg-primary/20";
       case "export_complete":
-        return "border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900";
+        return "border-primary/30 bg-primary-100/50 dark:border-primary/30 dark:bg-primary/20";
       case "failed":
-        return "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900";
+        return "border-destructive/30 bg-destructive/10 dark:border-destructive/30 dark:bg-destructive/20";
       default:
         return "";
     }
   };
 
   const getTextColor = () => {
-    switch (clientState) {
-      case "checking_existing":
+    switch (clientState) {      case "checking_existing":
       case "preparing_metadata":
       case "downloading":
-        return "text-blue-800 dark:text-blue-200";
+        return "text-blue-700 dark:text-blue-300";
       case "existing_found":
       case "metadata_ready":
-        return "text-green-800 dark:text-green-200";
+        return "text-primary-700 dark:text-primary-300";
       case "export_complete":
-        return "text-green-800 dark:text-green-200";
+        return "text-primary-700 dark:text-primary-300";
       case "failed":
-        return "text-red-800 dark:text-red-200";
+        return "text-destructive dark:text-destructive";
       default:
         return "";
     }
@@ -434,14 +432,13 @@ export default function ZipExport() {
 
   return (
     <div class="space-y-4">
-      {/* Export Options */}
-      <div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-        <h4 class="text-sm font-medium text-gray-900 dark:text-white mb-3">
+      {/* Export Options */}      <div class="bg-card rounded-lg p-4">
+        <h4 class="text-sm font-medium text-card-foreground mb-3">
           导出选项
         </h4>
         <label
           for="exportIncludeMetadata"
-          class="flex items-center text-sm text-gray-700 dark:text-gray-300"
+          class="flex items-center text-sm text-foreground"
         >
           <input
             type="checkbox"
@@ -449,17 +446,17 @@ export default function ZipExport() {
             checked={includeMetadata}
             onChange={(e) =>
               setIncludeMetadata((e.target as HTMLInputElement).checked)}
-            class="mr-2 h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
+            class="mr-2 h-4 w-4 text-primary focus:ring-primary border-input rounded bg-background"
             disabled={isProcessing}
           />
           在 ZIP 文件中包含 metadata.json
         </label>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
+        <p class="text-xs text-muted-foreground mt-1 ml-6">
           包含图像的详细信息（标题、尺寸、创建时间等）
         </p>
         <label
           for="exportIncludeThumbnails"
-          class="flex items-center text-sm text-gray-700 dark:text-gray-300"
+          class="flex items-center text-sm text-foreground"
         >
           <input
             type="checkbox"
@@ -467,12 +464,12 @@ export default function ZipExport() {
             checked={includeThumbnails}
             onChange={(e) =>
               setIncludeThumbnails((e.target as HTMLInputElement).checked)}
-            class="mr-2 h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
+            class="mr-2 h-4 w-4 text-primary focus:ring-primary border-input rounded bg-background"
             disabled={isProcessing}
           />
           在 ZIP 文件中包含缩略图
         </label>
-        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 ml-6">
+        <p class="text-xs text-muted-foreground mt-1 ml-6">
           包含图像的缩略图，便于快速浏览
         </p>
       </div>
@@ -484,11 +481,10 @@ export default function ZipExport() {
           onClick={handleExport}
           disabled={isProcessing || !accessToken}
           data-export-trigger
-          title="检查并导出"
-          class={`flex-1 sm:flex-none px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
+          title="检查并导出"          class={`flex-1 sm:flex-none px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
             isProcessing || !accessToken
-              ? "bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed"
-              : "bg-green-600 hover:bg-green-700 text-white shadow-lg hover:shadow-xl"
+              ? "bg-muted text-muted-foreground cursor-not-allowed"
+              : "bg-primary hover:bg-primary/90 text-primary-foreground shadow hover:shadow-lg"
           }`}
         >
           <span class="flex items-center justify-center gap-2">

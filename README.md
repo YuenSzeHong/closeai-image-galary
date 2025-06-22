@@ -6,7 +6,6 @@
 
 - 🖼️ **图片浏览**: 查看所有 ChatGPT 生成的图片，支持分页加载
 - 📦 **批量导出**: 一键下载所有图片为 ZIP 文件，包含元数据
-- 🌐 **多语言**: 支持简体中文、英文、繁体中文
 - 👥 **团队支持**: 支持 ChatGPT 团队工作区
 - 🎨 **现代界面**: 响应式设计，支持深色模式
 - ⚡ **高性能**: 基于 Fresh 框架，边缘渲染优化
@@ -42,7 +41,6 @@ deno task start
 - **框架**: Fresh (Deno) - 现代全栈 Web 框架
 - **前端**: Preact + Tailwind CSS + TypeScript
 - **状态管理**: Preact Signals
-- **国际化**: 基于 Signals 的多语言系统
 - **特性**: SSR、岛屿架构、边缘优化
 
 ## 开发命令
@@ -74,16 +72,11 @@ deno task preview    # 预览构建结果
 │   └── NotificationManager.tsx # 通知管理
 ├── components/      # 服务端组件
 │   ├── Header.tsx         # 页面头部
-│   ├── LanguageSelector.tsx # 语言选择器
 │   ├── ImageModal.tsx     # 图片查看模态框
 │   └── GalleryItem.tsx    # 图片画廊项目
 ├── lib/            # 核心库文件
-│   ├── chatgpt-client.ts  # ChatGPT API 客户端
-│   ├── i18n.ts           # 国际化配置
-│   ├── i18n-provider.ts  # 国际化状态管理
-│   └── translations/     # 翻译文件
+│   └── chatgpt-client.ts  # ChatGPT API 客户端
 ├── hooks/          # 自定义钩子
-│   ├── useTranslation.ts # 翻译钩子
 │   └── useLocalStorage.ts # 本地存储钩子
 ├── utils/          # 工具函数
 │   ├── chatgpt.ts        # ChatGPT 工具函数
@@ -95,13 +88,6 @@ deno task preview    # 预览构建结果
 
 项目使用统一的 ChatGPT API 客户端架构，详见 [API 架构文档](CHATGPT_API_ARCHITECTURE.md)。
 
-## 国际化
-
-项目支持多语言，基于 Preact Signals 实现响应式语言切换：
-
-- 🇨🇳 简体中文（默认）
-- 🇺🇸 英文
-- 🇹🇼 繁体中文
 
 ## 贡献指南
 

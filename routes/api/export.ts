@@ -357,8 +357,11 @@ async function fetchAllImageMetadata(
       totalImages?: number;
     },
   ) => Promise<void>,
-): Promise<ImageItem[]> {
-  const client = createChatGPTClient({ accessToken, teamId });
+): Promise<ImageItem[]> {  const client = createChatGPTClient({ 
+    accessToken, 
+    teamId,
+    useProxy: false // Use direct API calls for backend operations
+  });
 
   console.log(`[Meta] Starting metadata fetch for teamId: ${teamId || "personal"}`);
 

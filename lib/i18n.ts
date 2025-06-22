@@ -1,5 +1,8 @@
 // lib/i18n.ts
-export type SupportedLocale = "zh-CN" | "en" | "zh-TW";
+// This is a simplified version of the i18n system
+// It will be re-introduced later with proper internationalization
+
+export type SupportedLocale = "zh-CN";
 
 export interface I18nConfig {
   defaultLocale: SupportedLocale;
@@ -8,18 +11,35 @@ export interface I18nConfig {
 
 export const i18nConfig: I18nConfig = {
   defaultLocale: "zh-CN",
-  supportedLocales: ["zh-CN", "en", "zh-TW"],
+  supportedLocales: ["zh-CN"],
 };
 
 export const localeNames: Record<SupportedLocale, string> = {
   "zh-CN": "简体中文",
-  "en": "English",
-  "zh-TW": "繁體中文",
 };
 
-// Translation keys type for better type safety
-export interface TranslationKeys {
-  // Common
+// Simple function to help with migration
+export function t(key: string, params?: Record<string, string | number>): string {
+  // Just return the key for now - we'll extract hardcoded strings later
+  return key;
+}
+
+// Stub functions to avoid errors
+export function getBrowserLocale(): SupportedLocale {
+  return "zh-CN";
+}
+
+export function getStoredLocale(): SupportedLocale {
+  return "zh-CN";
+}
+
+export function setStoredLocale(): void {
+  // Do nothing
+}
+
+export function isValidLocale(locale: string): locale is SupportedLocale {
+  return locale === "zh-CN";
+}
   common: {
     loading: string;
     save: string;
@@ -229,10 +249,10 @@ export interface TranslationKeys {
 
   // Theme
   theme: {
-    toggleTheme: string;
-    lightMode: string;
-    darkMode: string;
-    systemMode: string;
+    toggle: string;
+    light: string;
+    dark: string;
+    system: string;
   };
   // Language
   language: {

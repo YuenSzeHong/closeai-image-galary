@@ -20,7 +20,7 @@ export default function LoadingSpinner({
       <div
         class={`inline-block ${
           sizeClasses[size]
-        } animate-spin rounded-full border-4 border-solid border-primary border-r-transparent`}
+        } animate-spin rounded-full border-4 border-solid border-primary-500 border-r-transparent`}
       >
       </div>
       {text && (

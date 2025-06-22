@@ -71,18 +71,17 @@ export default function ImageModal({
     const isUrl = typeof field.value === "string" &&
       field.value.startsWith("http");
 
-    return (
-      <div class="border-b border-gray-700 pb-2">
-        <div class="text-gray-300 font-medium text-xs uppercase tracking-wide mb-1">
+    return (      <div class="border-b border-border pb-2">
+        <div class="text-muted-foreground font-medium text-xs uppercase tracking-wide mb-1">
           {field.label}
         </div>
-        <div class="text-white text-sm break-words">
+        <div class="text-foreground text-sm break-words">
           {isUrl
             ? (
               <a
                 href={field.value as string}
                 target="_blank"
-                class="text-blue-400 hover:text-blue-300 break-all"
+                class="text-primary hover:text-primary/80 break-all"
               >
                 {formattedValue}
               </a>
@@ -175,10 +174,9 @@ export default function ImageModal({
     }
   };
 
-  return (
-    <div
+  return (      <div
       id="imageModal"
-      class={`fixed inset-0 bg-black/80 dark:bg-black/90 backdrop-blur-sm z-50 ${
+      class={`fixed inset-0 bg-background/80 backdrop-blur-sm z-50 ${
         isOpen ? "flex" : "hidden"
       } items-center justify-center p-4`}
       onClick={handleModalClick}
@@ -187,7 +185,7 @@ export default function ImageModal({
         <button
           type="button"
           title="关闭弹窗 (ESC)"
-          class="absolute -top-12 right-0 text-white text-3xl font-bold hover:text-gray-300 transition-colors z-30"
+          class="absolute -top-12 right-0 text-foreground text-3xl font-bold hover:text-muted-foreground transition-colors z-30"
           onClick={onClose}
         >
           &times;
@@ -196,7 +194,7 @@ export default function ImageModal({
         <button
           type="button"
           title="显示/隐藏元数据"
-          class="absolute -top-12 right-12 text-white hover:text-gray-300 transition-colors cursor-pointer p-2 rounded-md hover:bg-black/30 z-30 flex items-center"
+          class="absolute -top-12 right-12 text-foreground hover:text-muted-foreground transition-colors cursor-pointer p-2 rounded-md hover:bg-muted/30 z-30 flex items-center"
           onClick={onToggleMetadata}
         >
           <svg
@@ -219,7 +217,7 @@ export default function ImageModal({
         <button
           type="button"
           title="下载图片"
-          class="absolute -top-12 left-0 text-white hover:text-gray-300 transition-colors cursor-pointer p-2 rounded-md hover:bg-black/30 z-30 flex items-center"
+          class="absolute -top-12 left-0 text-foreground hover:text-muted-foreground transition-colors cursor-pointer p-2 rounded-md hover:bg-muted/30 z-30 flex items-center"
           onClick={onDownload}
         >
           <svg
@@ -247,16 +245,15 @@ export default function ImageModal({
           {currentImage
             ? (
               <>
-                {imageLoading && (
-                  <div class="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded animate-pulse flex items-center justify-center">
-                    <div class="text-gray-600 dark:text-gray-400 text-lg font-medium">
+                {imageLoading && (                  <div class="absolute inset-0 bg-muted rounded animate-pulse flex items-center justify-center">
+                    <div class="text-muted-foreground text-lg font-medium">
                       加载中...
                     </div>
                   </div>
                 )}
                 {imageError && (
-                  <div class="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded flex items-center justify-center">
-                    <div class="text-red-500 text-lg font-medium">
+                  <div class="absolute inset-0 bg-muted rounded flex items-center justify-center">
+                    <div class="text-destructive text-lg font-medium">
                       图片加载失败
                     </div>
                   </div>
@@ -280,7 +277,7 @@ export default function ImageModal({
                 />
                 <div
                   id="modalTitle"
-                  class="absolute -bottom-12 left-0 right-0 text-white text-base p-2 bg-black/50 rounded text-center"
+                  class="absolute -bottom-12 left-0 right-0 text-foreground text-base p-2 bg-background/50 rounded text-center"
                 >
                   {currentImage.title}
                 </div>
@@ -293,17 +290,15 @@ export default function ImageModal({
                 </div>
               </div>
             )}
-        </div>
-
-        {/* Metadata Panel */}
+        </div>        {/* Metadata Panel */}
         <div
           id="metadataPanel"
-          class={`absolute top-0 right-0 h-full w-96 bg-black/90 backdrop-blur-sm border-l border-gray-600 ${
+          class={`absolute top-0 right-0 h-full w-96 bg-popover backdrop-blur-sm border-l border-border ${
             isMetadataPanelOpen ? "" : "hidden"
           } overflow-y-auto z-40`}
         >
           <div class="p-4">
-            <h3 class="text-white text-lg font-semibold mb-4 border-b border-gray-600 pb-2">
+            <h3 class="text-foreground text-lg font-semibold mb-4 border-b border-border pb-2">
               图像元数据
             </h3>
             <div class="space-y-3 text-sm">
@@ -315,7 +310,7 @@ export default function ImageModal({
                     </div>
                   ))
                 )
-                : <div class="text-gray-400">选择图像以查看元数据</div>}
+                : <div class="text-muted-foreground">选择图像以查看元数据</div>}
             </div>
           </div>
         </div>

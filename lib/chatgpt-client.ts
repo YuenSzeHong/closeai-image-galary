@@ -10,6 +10,7 @@ import type {
 
 // Base configuration
 const CHATGPT_PROXY_BASE_URL = "/api/proxy";
+const CHATGPT_BASE_URL = "https://chatgpt.com/backend-api";
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -19,6 +20,7 @@ export interface ChatGPTConfig {
   teamId?: string;
   userAgent?: string;
   timeout?: number;
+  useProxy?: boolean; // Add option to use proxy or direct API calls
 }
 
 export interface ChatGPTRequestOptions {
@@ -86,6 +88,7 @@ export class ChatGPTClient {
     accessToken: string;
     userAgent: string;
     timeout: number;
+    useProxy: boolean;
   };
 
   constructor(config: ChatGPTConfig) {
@@ -99,6 +102,7 @@ export class ChatGPTClient {
       teamId: config.teamId,
       userAgent: config.userAgent || DEFAULT_USER_AGENT,
       timeout: config.timeout || 25000,
+      useProxy: config.useProxy !== false, // default to true if not specified
     };
   }
 
@@ -149,8 +153,7 @@ export class ChatGPTClient {
       `ChatGPT API 错误：${response.status} ${response.statusText}`,
       response.status,
     );
-  }
-  /**
+  }  /**
    * Fetch a single batch of images
    */
   async fetchImageBatch(
@@ -158,12 +161,40 @@ export class ChatGPTClient {
   ): Promise<ImageBatchResponse> {
     const { after, limit = 50, metadataOnly = false, timeout } = options;
     const requestTimeout = timeout || this.config.timeout;
-
-    const baseUrl = globalThis.location?.origin || "http://localhost:8000";
-    const targetUrl = new URL(
-      `${CHATGPT_PROXY_BASE_URL}/my/recent/image_gen`,
-      baseUrl,
-    );
+    
+    // Create URL and params based on whether we're using proxy or direct API
+    let targetUrl: URL;
+    let headers: HeadersInit;
+    
+    if (this.config.useProxy) {
+      // Use proxy route
+      const baseUrl = globalThis.location?.origin || "http://localhost:8000";
+      targetUrl = new URL(
+        `${CHATGPT_PROXY_BASE_URL}/my/recent/image_gen`,
+        baseUrl,
+      );
+      headers = this.createHeaders(options);
+    } else {
+      // Direct API call
+      targetUrl = new URL(`${CHATGPT_BASE_URL}/my/recent/image_gen`);
+      headers = {
+        "accept": "*/*",
+        "authorization": "Bearer " + this.config.accessToken,
+        "cache-control": "no-cache",
+        "user-agent": this.config.userAgent,
+        "accept-encoding": "gzip, deflate, br",
+        "accept-language": "en-US,en;q=0.9",
+        "connection": "keep-alive",
+      };
+      
+      // Add team ID if provided and not "personal"
+      const teamId = options?.teamId || this.config.teamId;
+      if (teamId && teamId.trim() !== "" && teamId.trim() !== "personal") {
+        headers["chatgpt-account-id"] = teamId.trim();
+      }
+    }
+    
+    // Add common query parameters
     targetUrl.searchParams.set(
       "limit",
       String(limit && limit > 0 && limit <= 1000 ? limit : 50),
@@ -176,8 +207,6 @@ export class ChatGPTClient {
     if (metadataOnly) {
       targetUrl.searchParams.set("metadata_only", "true");
     }
-
-    const headers = this.createHeaders(options);
 
     const response = await fetch(targetUrl.toString(), {
       headers,
@@ -206,18 +235,34 @@ export class ChatGPTClient {
     }
 
     return data;
-  }
-  /**
+  }  /**
    * Fetch team/account list
    */
   async fetchTeamList(): Promise<TeamAccount[]> {
-    const baseUrl = globalThis.location?.origin || "http://localhost:8000";
-    const targetUrl = new URL(
-      `${CHATGPT_PROXY_BASE_URL}/accounts/check/v4-2023-04-27`,
-      baseUrl,
-    );
+    let targetUrl: URL;
+    let headers: HeadersInit;
 
-    const headers = this.createHeaders();
+    if (this.config.useProxy) {
+      // Use proxy route
+      const baseUrl = globalThis.location?.origin || "http://localhost:8000";
+      targetUrl = new URL(
+        `${CHATGPT_PROXY_BASE_URL}/accounts/check/v4-2023-04-27`,
+        baseUrl,
+      );
+      headers = this.createHeaders();
+    } else {
+      // Direct API call
+      targetUrl = new URL(`${CHATGPT_BASE_URL}/accounts/check/v4-2023-04-27`);
+      headers = {
+        "accept": "*/*",
+        "authorization": "Bearer " + this.config.accessToken,
+        "cache-control": "no-cache",
+        "user-agent": this.config.userAgent,
+        "accept-encoding": "gzip, deflate, br",
+        "accept-language": "en-US,en;q=0.9",
+        "connection": "keep-alive",
+      };
+    }
 
     const response = await fetch(targetUrl.toString(), { headers });
 

@@ -1,5 +1,4 @@
 import { useEffect, useState } from "preact/hooks";
-import { useTranslation } from "../hooks/useTranslation.ts";
 import { TeamAccount } from "../lib/types.ts";
 import { createChatGPTClient } from "../lib/chatgpt-client.ts";
 
@@ -16,7 +15,7 @@ export default function TeamSelector({
   onTeamChange,
   className = "",
 }: TeamSelectorProps) {
-  const { t } = useTranslation();
+  
   const [teams, setTeams] = useState<TeamAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
