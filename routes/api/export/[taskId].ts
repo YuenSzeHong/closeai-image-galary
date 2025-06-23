@@ -25,10 +25,9 @@ interface ImageData {
   metadata?: Record<string, unknown>;
 }
 
-export const handler: Handlers = {
-  async GET(_req, ctx: FreshContext) {
+export const handler: Handlers = {  async GET(_req, ctx: FreshContext) {
     const taskId = ctx.params.taskId;
-    console.log(`[${taskId}] 📥 Starting download`);
+    console.log(`[${taskId}] 📥 开始下载`);
 
     try {
       const kv = await getKv();
@@ -36,11 +35,11 @@ export const handler: Handlers = {
       // 获取任务信息
       const taskResult = await kv.get<TaskMeta>(['tasks', taskId]);
       if (!taskResult.value) {
-        return new Response('Task not found', { status: 404 });
+        return new Response('任务未找到', { status: 404 });
       }
       
       const task = taskResult.value;
-      console.log(`[${taskId}] 📊 Found ${task.totalImages} images in ${task.totalChunks} chunks`);
+      console.log(`[${taskId}] 📊 找到${task.totalImages}张图片，分布在${task.totalChunks}个数据块中`);
         // 创建流式响应
       const headers = new Headers({
         'Content-Type': 'application/zip',
@@ -59,11 +58,10 @@ export const handler: Handlers = {
       
       return new Response(
         new ReadableStream({
-          async start(controller) {
-            try {
+          async start(controller) {            try {
               await processTask(controller, taskId, task, kv);
             } catch (error) {
-              console.error(`[${taskId}] Error:`, error);
+              console.error(`[${taskId}] 错误:`, error);
               controller.error(error);
             }
           }
@@ -72,8 +70,8 @@ export const handler: Handlers = {
       );
 
     } catch (error) {
-      console.error(`[${taskId}] Setup error:`, error);
-      return new Response(`Error: ${error instanceof Error ? error.message : String(error)}`, { status: 500 });
+      console.error(`[${taskId}] 设置错误:`, error);
+      return new Response(`错误: ${error instanceof Error ? error.message : String(error)}`, { status: 500 });
     }
   },
 };
@@ -94,10 +92,9 @@ async function processTask(
   if (!lockResult.ok) {
     // 检查锁的年龄，如果太老可能是僵尸锁
     const existingLock = await kv.get(lockKey);
-    if (existingLock.value) {
-      const lockAge = Date.now() - (existingLock.value as any).startTime;
+    if (existingLock.value) {      const lockAge = Date.now() - (existingLock.value as any).startTime;
       if (lockAge > 5 * 60 * 1000) { // 5分钟的僵尸锁
-        console.warn(`[${taskId}] Removing stale lock (${Math.round(lockAge/1000)}s old)`);
+        console.warn(`[${taskId}] 移除过期锁 (${Math.round(lockAge/1000)}秒)`);
         await kv.delete(lockKey);
         // 重试获取锁
         const retryResult = await kv.atomic()
@@ -105,15 +102,14 @@ async function processTask(
           .set(lockKey, { startTime: Date.now(), pid: crypto.randomUUID() }, { expireIn: 10 * 60 * 1000 })
           .commit();
         if (!retryResult.ok) {
-          throw new Error('Task is already being processed by another request');
+          throw new Error('任务正在被另一个请求处理中');
         }
       } else {
-        throw new Error('Task is already being processed by another request');
-      }
-    }
+        throw new Error('任务正在被另一个请求处理中');
+      }    }
   }
   
-  console.log(`[${taskId}] 🔒 Acquired task lock`);
+  console.log(`[${taskId}] 🔒 获取任务锁`);
     let closed = false;
   
   // Configure zip with lower compression level to reduce CPU usage
@@ -125,12 +121,11 @@ async function processTask(
   // Send ZIP data chunks immediately without buffering
   zip.ondata = (err, chunk, final) => {
     if (closed) return;
-    
-    if (err) {
-      console.error(`[${taskId}] ZIP error:`, err);
+      if (err) {
+      console.error(`[${taskId}] ZIP错误:`, err);
       if (!closed) {
         closed = true;
-        controller.error(new Error(`ZIP error: ${err.message}`));
+        controller.error(new Error(`ZIP错误: ${err.message}`));
       }
       return;
     }
@@ -139,42 +134,54 @@ async function processTask(
       try {
         controller.enqueue(chunk);
       } catch (e) {
-        console.error(`[${taskId}] Controller error:`, e);
+        console.error(`[${taskId}] 控制器错误:`, e);
         closed = true;
       }
     }
     
     if (final && !closed) {
       try {
-        console.log(`[${taskId}] ✅ Completed`);
+        console.log(`[${taskId}] ✅ 完成`);
         controller.close();
       } catch (e) {
-        console.error(`[${taskId}] Close error:`, e);
+        console.error(`[${taskId}] 关闭错误:`, e);
       } finally {
         closed = true;
       }
     }
   };
 
-  try {
-    // 🎯 方案B：先写元数据，立即清空KV
+  try {    // 🎯 方案B：先写元数据，立即清空KV
     if (task.includeMetadata) {
-      console.log(`[${taskId}] 📄 Adding metadata.json`);
+      console.log(`[${taskId}] 📄 添加metadata.json`);
       await writeMetadata(zip, taskId, task, kv);
       
-      console.log(`[${taskId}] 🧹 Clearing metadata from KV`);
+      console.log(`[${taskId}] 🧹 从KV中清除元数据`);
       await clearMetadata(taskId, task, kv);
     }
+      // 然后处理图片
+    let successCount = 0;
+    let errorCount = 0;
+    console.log(`[${taskId}] 📸 处理图片中`);
+    await processImages(zip, taskId, task, kv, (success) => {
+      if (success) {
+        successCount++;
+        // Only log progress occasionally instead of for every item
+        if (successCount % 20 === 0 || successCount + errorCount === task.totalImages) {
+          console.log(`[${taskId}] 📊 进度: ${successCount + errorCount}/${task.totalImages} (${errorCount}个错误)`);
+        }
+      } else {
+        errorCount++;
+      }
+    });
     
-    // 然后处理图片
-    console.log(`[${taskId}] 📸 Processing images`);
-    await processImages(zip, taskId, task, kv);
+    // Log final summary
+    console.log(`[${taskId}] 📊 最终结果: ${successCount + errorCount}/${task.totalImages} 完成 (${errorCount}个错误)`);
     
-    // 完成ZIP
-    zip.end();
+    // 完成ZIP    zip.end();
     
   } catch (error) {
-    console.error(`[${taskId}] Processing error:`, error);
+    console.error(`[${taskId}] 处理错误:`, error);
     if (!closed) {
       closed = true;
       controller.error(error);
@@ -183,9 +190,9 @@ async function processTask(
     // 🔒 释放任务锁
     try {
       await kv.delete(['task_lock', taskId]);
-      console.log(`[${taskId}] 🔓 Released task lock`);
+      console.log(`[${taskId}] 🔓 释放任务锁`);
     } catch (lockError) {
-      console.error(`[${taskId}] Error releasing lock:`, lockError);
+      console.error(`[${taskId}] 释放锁错误:`, lockError);
     }
   }
 }
@@ -270,11 +277,16 @@ async function clearMetadata(taskId: string, task: TaskMeta, kv: Deno.Kv) {
   await kv.delete(['meta_info', taskId]);
 }
 
-async function processImages(zip: fflate.Zip, taskId: string, task: TaskMeta, kv: Deno.Kv) {
+async function processImages(
+  zip: fflate.Zip, 
+  taskId: string, 
+  task: TaskMeta, 
+  kv: Deno.Kv,
+  progressCallback?: (success: boolean) => void
+) {
   let processed = 0;
-  
-  for (let i = 0; i < task.totalChunks; i++) {
-    console.log(`[${taskId}] 📦 Chunk ${i + 1}/${task.totalChunks}`);
+    for (let i = 0; i < task.totalChunks; i++) {
+    console.log(`[${taskId}] 📦 数据块 ${i + 1}/${task.totalChunks}`);
       // Force GC before each chunk
     try {
       // @ts-ignore: Deno doesn't type gc() but it exists in some environments
@@ -298,11 +310,13 @@ async function processImages(zip: fflate.Zip, taskId: string, task: TaskMeta, kv
       const batchImages = imageArray.slice(j, j + batchSize);
       
       // Process each batch image serially
-      for (const img of batchImages) {
-        // Check if already processed
-        const done = await kv.get(['done', taskId, img.id]);
+      for (const img of batchImages) {        // Check if already processed        const done = await kv.get(['done', taskId, img.id]);
         if (done.value) {
-          console.log(`[${taskId}] 🔄 Skip: ${img.id}`);
+          // Silently skip already processed items (no logging)
+          processed++;
+          if (progressCallback) {
+            progressCallback(true);
+          }
           continue;
         }
         
@@ -314,23 +328,29 @@ async function processImages(zip: fflate.Zip, taskId: string, task: TaskMeta, kv
           if (task.includeThumbnails && img.thumbnailUrl && img.thumbnailUrl !== img.url) {
             await processImageWithRetry(img, zip, taskId, true);
           }
-          
-          // Mark as complete
+            // Mark as complete
           await kv.set(['done', taskId, img.id], true, { expireIn: 2 * 60 * 60 * 1000 });
           
           processed++;
-          console.log(`[${taskId}] ✅ ${processed}/${task.totalImages}: ${img.title}`);
-            // Force GC after each image to prevent memory buildup
+          // Notify progress through callback if provided
+          if (progressCallback) {
+            progressCallback(true);
+          }
+          
+          // Force GC after each image to prevent memory buildup
           try {
             // @ts-ignore: Deno doesn't type gc() but it exists in some environments
             if (globalThis.gc) globalThis.gc();
           } catch (e) {
             // Ignore errors from GC
-          }
-          
-        } catch (error) {
-          console.error(`[${taskId}] ❌ Failed ${img.id}:`, error);
+          }          } catch (error) {
+          console.error(`[${taskId}] ❌ 失败 ${img.id}:`, error);
           await kv.set(['failed', taskId, img.id], { error: error.message, time: Date.now() });
+          
+          // Notify error through callback if provided
+          if (progressCallback) {
+            progressCallback(false);
+          }
         }
       }
       
@@ -436,8 +456,7 @@ async function processImageStream(img: ImageData, zip: fflate.Zip, taskId: strin
           if (value && value.length > 0) {
             file.push(value, done);
           } else if (done) {
-            file.push(new Uint8Array(0), true);
-          }
+            file.push(new Uint8Array(0), true);          }
           
           if (done) break;
           
@@ -447,7 +466,7 @@ async function processImageStream(img: ImageData, zip: fflate.Zip, taskId: strin
           }
         }
         
-        console.log(`[${taskId}] ✅ Added: ${filename}`);
+        // Success is silent to reduce log spam
       } catch (streamError) {
         console.error(`[${taskId}] Stream processing error:`, streamError);
         throw streamError;
@@ -479,124 +498,3 @@ async function processImageStream(img: ImageData, zip: fflate.Zip, taskId: strin
   }
 }
 
-// Process image with retry logic
-async function processImageWithRetry(img: ImageData, zip: fflate.Zip, taskId: string, isThumbnail: boolean, retries = 2) {
-  let attempt = 0;
-  let lastError: Error | null = null;
-  
-  while (attempt <= retries) {
-    try {
-      if (attempt > 0) {
-        console.log(`[${taskId}] 🔄 Retry ${attempt}/${retries} for ${img.id}`);
-        // Add exponential backoff delay between retries
-        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt - 1)));
-      }
-      
-      await processImageStream(img, zip, taskId, isThumbnail);
-      return; // Success, exit retry loop
-      
-    } catch (error) {
-      lastError = error;
-      console.error(`[${taskId}] ⚠️ Attempt ${attempt + 1} failed for ${img.id}:`, error);
-      attempt++;
-      
-      // Force GC after each failed attempt
-      try {
-        // @ts-ignore
-        if (globalThis.gc) globalThis.gc();
-      } catch {}
-    }
-  }
-  
-  // If we got here, all retries failed
-  throw lastError || new Error("Failed to process image after retries");
-}
-
-// Process image using streaming to minimize memory usage
-async function processImageStream(img: ImageData, zip: fflate.Zip, taskId: string, isThumbnail: boolean) {
-  const url = isThumbnail ? img.thumbnailUrl! : img.url;
-  const timeout = isThumbnail ? 15000 : 30000;
-  
-  // Setup abort controller for timeout
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'Accept': 'image/*' }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    
-    // Generate filename
-    const date = formatDateForFilename(img.created_at);
-    const title = sanitizeFilename(img.title, 50);
-    const id = img.id.slice(-8);
-    const ext = getExtensionFromResponse(response, url);
-    
-    const folder = isThumbnail ? 'thumbnails' : 'images';
-    const suffix = isThumbnail ? '_thumb' : '';
-    const filename = `${folder}/${date}_${title}_${id}${suffix}.${ext}`;
-    
-    // Process with streams if supported
-    if (response.body) {
-      const file = new fflate.ZipDeflate(filename, { level: 3 });
-      zip.add(file);
-      
-      // Using streams to process data in chunks
-      const reader = response.body.getReader();
-      const CHUNK_SIZE = 64 * 1024; // 64KB chunks
-      let isFirst = true;
-      let isLast = false;
-      
-      try {
-        while (!isLast) {
-          const { done, value } = await reader.read();
-          isLast = done;
-          
-          if (value && value.length > 0) {
-            file.push(value, isLast);
-          } else if (isLast) {
-            file.push(new Uint8Array(0), true);
-          }
-          
-          isFirst = false;
-          
-          // Small pause between chunks for GC to catch up
-          if (!isLast && value && value.length >= CHUNK_SIZE) {
-            await new Promise(resolve => setTimeout(resolve, 10));
-          }
-        }
-        
-        console.log(`[${taskId}] ✅ Added: ${filename}`);
-      } catch (streamError) {
-        console.error(`[${taskId}] Stream processing error:`, streamError);
-        throw streamError;
-      } finally {
-        // Cleanup reader
-        try {
-          reader.releaseLock();
-        } catch {}
-      }
-    } else {
-      // Fallback for browsers without stream support
-      const arrayBuffer = await response.arrayBuffer();
-      const data = new Uint8Array(arrayBuffer);
-      
-      const file = new fflate.ZipDeflate(filename, { level: 3 });
-      zip.add(file);
-      file.push(data, true);
-      
-      console.log(`[${taskId}] ✅ Added: ${filename}`);
-    }
-    
-  } catch (error) {
-    console.error(`[${taskId}] Image processing error:`, error);
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}

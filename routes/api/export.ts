@@ -43,13 +43,12 @@ export const handler: Handlers = {
       
       const taskId = crypto.randomUUID();
       const kv = await getKv();
-      
-      console.log(`[${taskId}] 🚀 Starting export task`);
+        console.log(`[${taskId}] 🚀 开始导出任务`);
       
       // 检查现有任务
       const existing = await checkExistingTask(token, teamId, kv);
       if (existing) {
-        console.log(`[${taskId}] 🎯 Found existing task: ${existing.taskId}`);
+        console.log(`[${taskId}] 🎯 找到现有任务: ${existing.taskId}`);
         return Response.json({
           type: "existing_task_found",
           taskId: existing.taskId,
@@ -57,7 +56,7 @@ export const handler: Handlers = {
           downloadUrl: `/api/export/${existing.taskId}`,
           totalImages: existing.totalImages,
           ageHours: Math.round((Date.now() - existing.createdAt) / (1000 * 60 * 60)),
-          message: "Found existing export ready for download"
+          message: "找到可供下载的导出任务"
         });
       }
       
@@ -114,9 +113,8 @@ async function processExport(
       console.error(`[${taskId}] SSE send error:`, e);
     }
   };
-  
-  try {
-    send({ type: "status", message: "Starting metadata fetch..." });
+    try {
+    send({ type: "status", message: "开始获取元数据..." });
     
     // 获取所有图片元数据
     const client = createChatGPTClient({ accessToken: token, teamId, bypassProxy: true });
@@ -125,7 +123,7 @@ async function processExport(
       onProgress: (progress) => {
         send({
           type: "progress",
-          message: `Fetching metadata... ${progress.totalImages} images found`,
+          message: `获取元数据中... 已找到${progress.totalImages}张图片`,
           progress: progress.progress
         });
         return Promise.resolve();
@@ -133,10 +131,10 @@ async function processExport(
     });
     
     if (allImages.length === 0) {
-      throw new Error("No images found");
+      throw new Error("未找到任何图片");
     }
-      console.log(`[${taskId}] 📊 Found ${allImages.length} images`);
-    send({ type: "status", message: `Found ${allImages.length} images, preparing export...` });
+      console.log(`[${taskId}] 📊 找到${allImages.length}张图片`);
+    send({ type: "status", message: `找到${allImages.length}张图片，准备导出中...` });
     
     // Convert and store data with smaller chunks to reduce memory pressure
     const chunkSize = 25; // Reduced from 50 to 25 images per chunk
@@ -265,8 +263,7 @@ async function processExport(
     // 缓存为最近任务
     const key = `${token.slice(-10)}_${teamId || 'personal'}`;
     await kv.set(['recent_tasks', key], taskMeta, { expireIn: 2 * 60 * 60 * 1000 });
-    
-    console.log(`[${taskId}] ✅ Export ready`);
+      console.log(`[${taskId}] ✅ 导出准备就绪`);
     
     // 发送完成事件
     send({
@@ -277,7 +274,7 @@ async function processExport(
       totalImages: allImages.length
     });
       } catch (error) {
-    console.error(`[${taskId}] Export error:`, error);
+    console.error(`[${taskId}] 导出错误:`, error);
     send({ 
       type: "error", 
       error: error instanceof Error ? error.message : String(error) 
@@ -286,7 +283,7 @@ async function processExport(
     try {
       controller.close();
     } catch (e) {
-      console.error(`[${taskId}] Controller close error:`, e);
+      console.error(`[${taskId}] 控制器关闭错误:`, e);
     }
   }
 }
