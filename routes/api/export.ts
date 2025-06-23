@@ -135,12 +135,11 @@ async function processExport(
     if (allImages.length === 0) {
       throw new Error("No images found");
     }
-    
-    console.log(`[${taskId}] 📊 Found ${allImages.length} images`);
+      console.log(`[${taskId}] 📊 Found ${allImages.length} images`);
     send({ type: "status", message: `Found ${allImages.length} images, preparing export...` });
     
-    // 转换和存储数据
-    const chunkSize = 50;
+    // Convert and store data with smaller chunks to reduce memory pressure
+    const chunkSize = 25; // Reduced from 50 to 25 images per chunk
     const totalChunks = Math.ceil(allImages.length / chunkSize);
     
     const workspace = teamId && teamId !== "personal" ? teamId.substring(0, 10) : "personal";
@@ -162,16 +161,15 @@ async function processExport(
     
     // 存储任务信息
     await kv.set(['tasks', taskId], taskMeta, { expireIn: 2 * 60 * 60 * 1000 });
-    
-    // 分片存储图片数据
-    const ops = kv.atomic();
-    
+        // Split the storage operations into two separate transactions
+    // First, store all image chunks (smaller to reduce memory pressure)
+    let imageOps = kv.atomic();
     for (let i = 0; i < totalChunks; i++) {
       const start = i * chunkSize;
       const end = Math.min(start + chunkSize, allImages.length);
       const chunkImages = allImages.slice(start, end);
       
-      // 转换为简化格式
+      // Convert to simplified format
       const imageData: ImageData[] = chunkImages.map(img => ({
         id: img.id,
         url: img.url,
@@ -180,35 +178,85 @@ async function processExport(
         created_at: img.created_at,
         width: img.width || 1024,
         height: img.height || 1024,
-        metadata: includeMetadata ? img.metadata : undefined
+        metadata: undefined // Don't include metadata in image chunks
       }));
       
-      // 存储图片chunk
-      ops.set(['img_chunks', taskId, i], imageData, { expireIn: 2 * 60 * 60 * 1000 });
+      // Store image chunk
+      imageOps.set(['img_chunks', taskId, i], imageData, { expireIn: 2 * 60 * 60 * 1000 });
       
-      // 如果需要元数据，也存储元数据chunk
-      if (includeMetadata) {
-        ops.set(['meta_chunks', taskId, i], imageData, { expireIn: 2 * 60 * 60 * 1000 });
+      // Add short delay between iterations to prevent memory pressure
+      if (i > 0 && i % 5 === 0) {
+        await imageOps.commit();
+        // Create a new transaction for the next batch
+        await new Promise(resolve => setTimeout(resolve, 100));
+        try {
+          // @ts-ignore: Deno doesn't type gc() but it exists in some environments
+          if (globalThis.gc) globalThis.gc();
+        } catch (_e) {
+          // Ignore errors from GC
+        }
+        imageOps = kv.atomic();
       }
     }
+    await imageOps.commit();
     
-    // 存储元数据信息
+    // Then, if needed, store metadata in a separate transaction
     if (includeMetadata) {
-      ops.set(['meta_info', taskId], { totalChunks, totalImages: allImages.length }, { expireIn: 2 * 60 * 60 * 1000 });
+      let metaOps = kv.atomic();
+      
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * chunkSize;
+        const end = Math.min(start + chunkSize, allImages.length);
+        const chunkImages = allImages.slice(start, end);
+        
+        // Convert with metadata included
+        const metaData: ImageData[] = chunkImages.map(img => ({
+          id: img.id,
+          url: img.url,
+          thumbnailUrl: extractThumbnailUrl(img),
+          title: img.title || "Untitled",
+          created_at: img.created_at,
+          width: img.width || 1024,
+          height: img.height || 1024,
+          metadata: img.metadata
+        }));
+        
+        // Store metadata chunk
+        metaOps.set(['meta_chunks', taskId, i], metaData, { expireIn: 2 * 60 * 60 * 1000 });
+        
+        // Add short delay between iterations to prevent memory pressure
+        if (i > 0 && i % 5 === 0) {
+          await metaOps.commit();
+          // Create a new transaction for the next batch
+          await new Promise(resolve => setTimeout(resolve, 100));
+          try {
+            // @ts-ignore: Deno doesn't type gc() but it exists in some environments
+            if (globalThis.gc) globalThis.gc();
+          } catch (_e) {
+            // Ignore errors from GC
+          }
+          metaOps = kv.atomic();
+        }
+      }
+      
+      // Store metadata info in the last transaction
+      metaOps.set(['meta_info', taskId], { totalChunks, totalImages: allImages.length }, { expireIn: 2 * 60 * 60 * 1000 });
+      await metaOps.commit();    }
+    if (includeMetadata) {
+      // Meta info is already set in the metadata transaction above
     }
     
-    // 提交所有操作
-    await ops.commit();
-    
-    // 清理内存中的大数组
-    // @ts-ignore
+    // Clean up memory// 清理内存中的大数组
+    // @ts-ignore: Clearing array to help with garbage collection
     allImages.length = 0;
     
     // 强制GC
     try {
-      // @ts-ignore
+      // @ts-ignore: Deno doesn't type gc() but it exists in some environments
       if (globalThis.gc) globalThis.gc();
-    } catch {}
+    } catch (_e) {
+      // Ignore errors from GC
+    }
     
     // 更新任务状态
     taskMeta.status = "ready";
@@ -228,10 +276,12 @@ async function processExport(
       downloadUrl: `/api/export/${taskId}`,
       totalImages: allImages.length
     });
-    
-  } catch (error) {
+      } catch (error) {
     console.error(`[${taskId}] Export error:`, error);
-    send({ type: "error", error: error.message });
+    send({ 
+      type: "error", 
+      error: error instanceof Error ? error.message : String(error) 
+    });
   } finally {
     try {
       controller.close();
@@ -241,7 +291,20 @@ async function processExport(
   }
 }
 
-function extractThumbnailUrl(img: any): string | undefined {
+// Fix TypeScript error by using Record for unknown properties
+interface ImageWithEncodings extends ImageItem {
+  encodings?: {
+    thumbnail?: { path?: string };
+  };
+  thumbnail?: { path?: string };
+  metadata?: {
+    encodings?: {
+      thumbnail?: { path?: string };
+    };
+  };
+}
+
+function extractThumbnailUrl(img: ImageWithEncodings): string | undefined {
   const paths = [
     img.encodings?.thumbnail?.path,
     img.metadata?.encodings?.thumbnail?.path,
