@@ -1,402 +1,258 @@
-// routes/api/export.ts
-
-/// <reference lib="deno.unstable" />
+// routes/api/export.ts - 配合新KV结构的版本
 import { Handlers } from "$fresh/server.ts";
 import { z } from "zod";
-import {
-  createChatGPTClient,
-  type ImageItem,
-} from "../../lib/chatgpt-client.ts";
-import {
-  type ExportStreamTaskMetadata,
-  type ExportTaskSseStatusKVSnapshot,
-  type SseEvent,
-  type SseMetadataProgressPayload,
-} from "../../lib/types.ts";
-import {
-  getKv,
-  KV_EXPIRY_SSE_STATUS,
-  KV_EXPIRY_STREAM_DATA,
-  MAX_IMAGES_PER_KV_CHUNK,
-} from "../../utils/kv.ts";
+import { createChatGPTClient, type ImageItem } from "../../lib/chatgpt-client.ts";
+import { getKv } from "../../utils/kv.ts";
 import { formatDateForFilename } from "../../utils/fileUtils.ts";
 
-const ExportRequestSchema = z.object({
-  token: z.string().min(10, "Access token must be at least 10 characters long."),
+const ExportRequest = z.object({
+  token: z.string().min(10),
   teamId: z.string().optional(),
   includeMetadata: z.boolean().default(true),
   includeThumbnails: z.boolean().default(false),
 });
 
-/**
- * Fresh Handlers for the `/api/export` route.
- * Handles GET (task status), POST (initiate export), and DELETE (cleanup expired tasks) requests.
- */
-export const handler: Handlers<
-  ExportTaskSseStatusKVSnapshot | null,
-  Record<PropertyKey, never>
-> = {
-  /** Handles GET requests to retrieve the status of a specific export task. */
-  async GET(req, _ctx) {
-    const kv = await getKv();
-    const url = new URL(req.url);
-    const taskId = url.searchParams.get("taskId");
+interface TaskMeta {
+  taskId: string;
+  teamId?: string;
+  includeMetadata: boolean;
+  includeThumbnails: boolean;
+  filename: string;
+  totalImages: number;
+  totalChunks: number;
+  status: "preparing" | "ready" | "failed";
+  createdAt: number;
+}
 
-    if (!taskId) {
-      return Response.json({ error: "Missing taskId parameter" }, {
-        status: 400,
-      });
-    }
+interface ImageData {
+  id: string;
+  url: string;
+  thumbnailUrl?: string;
+  title: string;
+  created_at: number;
+  width: number;
+  height: number;
+  metadata?: Record<string, unknown>;
+}
 
-    const taskResult = await kv.get<ExportTaskSseStatusKVSnapshot>([
-      "export_tasks_sse",
-      taskId,
-    ]);
-    if (!taskResult.value) {
-      return Response.json({ error: "Task not found" }, { status: 404 });
-    }
-    return Response.json(taskResult.value);
-  },
-
-  /** Handles POST requests to initiate a new export task or check for existing ones. */
+export const handler: Handlers = {
   async POST(req, _ctx) {
     try {
-      const kv = await getKv();
       const body = await req.json();
-      const validation = ExportRequestSchema.safeParse(body);
-      if (!validation.success) {
-        return Response.json(
-          {
-            error: "Invalid request body",
-            details: validation.error.format(),
-          },
-          { status: 400 },
-        );
-      }
-      const { token, teamId, includeMetadata, includeThumbnails } =
-        validation.data;
+      const { token, teamId, includeMetadata, includeThumbnails } = ExportRequest.parse(body);
+      
       const taskId = crypto.randomUUID();
-
-      const initialSseTask: ExportTaskSseStatusKVSnapshot = {
-        type: "status",
-        id: taskId,
-        status: "preparing",
-        stages: { metadata: { status: "pending", progress: 0 } },
-        progress: 0,
-        totalImages: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      await kv.set(["export_tasks_sse", taskId], initialSseTask, {
-        expireIn: KV_EXPIRY_SSE_STATUS,
-      });
-
+      const kv = await getKv();
+      
+      console.log(`[${taskId}] 🚀 Starting export task`);
+      
+      // 检查现有任务
+      const existing = await checkExistingTask(token, teamId, kv);
+      if (existing) {
+        console.log(`[${taskId}] 🎯 Found existing task: ${existing.taskId}`);
+        return Response.json({
+          type: "existing_task_found",
+          taskId: existing.taskId,
+          filename: existing.filename,
+          downloadUrl: `/api/export/${existing.taskId}`,
+          totalImages: existing.totalImages,
+          ageHours: Math.round((Date.now() - existing.createdAt) / (1000 * 60 * 60)),
+          message: "Found existing export ready for download"
+        });
+      }
+      
+      // 创建SSE流
       const stream = new ReadableStream({
         async start(controller) {
-          const sendEvent = (event: SseEvent) => {
-            if (
-              controller.desiredSize === null || controller.desiredSize > 0
-            ) {
-              controller.enqueue(
-                new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
-              );
-            } else {
-              console.warn(
-                `[${taskId}] SSE controller backpressure, event skipped for now.`,
-              );
-            }
-          };
-
-          const sendStatusUpdate = async (
-            updates: Partial<Omit<ExportTaskSseStatusKVSnapshot, "type" | "id">>,
-          ) => {
-            try {
-              const currentResult = await kv.get<ExportTaskSseStatusKVSnapshot>(
-                ["export_tasks_sse", taskId],
-              );
-              if (currentResult.value) {
-                const updatedTask: ExportTaskSseStatusKVSnapshot = {
-                  ...currentResult.value,
-                  ...updates,
-                  updatedAt: Date.now(),
-                };
-                await kv.set(["export_tasks_sse", taskId], updatedTask, {
-                  expireIn: KV_EXPIRY_SSE_STATUS,
-                });
-                sendEvent(updatedTask);
-              }
-            } catch (kvError) {
-              console.error(
-                `[${taskId}] KV error during sendStatusUpdate:`,
-                kvError,
-              );
-              sendEvent({
-                type: "error",
-                error: "KV operation failed during status update",
-                taskId: taskId,
-              });
-              try {
-                controller.close();
-              } catch (_e) { /* ignore */ }
-            }
-          };
-
-          sendEvent(initialSseTask);
-
-          try {
-            await sendStatusUpdate({
-              status: "processing",
-              stages: { metadata: { status: "running", progress: 0 } },
-            });
-
-            const allImages = await fetchAllImageMetadata(
-              token,
-              teamId,
-              async (metadataUpdate) => {
-                sendEvent({
-                  type: "metadata_progress",
-                  taskId: taskId,
-                  progress: metadataUpdate.progress,
-                  currentBatch: metadataUpdate.currentBatch,
-                  totalImages: metadataUpdate.totalImages,
-                  message:
-                    `正在获取图片列表 (批次 ${metadataUpdate.currentBatch || 0})`,
-                } as SseMetadataProgressPayload);
-
-                await sendStatusUpdate({
-                  stages: { metadata: metadataUpdate },
-                  totalImages: metadataUpdate.totalImages || 0,
-                  progress: metadataUpdate.progress,
-                });
-              },
-            );
-
-            if (allImages.length === 0) {
-              throw new Error("No images found to export.");
-            }
-
-            await sendStatusUpdate({
-              stages: {
-                metadata: {
-                  status: "completed",
-                  progress: 100,
-                },
-              },
-              totalImages: allImages.length,
-              progress: 100,
-            });
-
-            const workspaceName = teamId && teamId !== "personal"
-              ? teamId.substring(0, 10)
-              : "personal";
-            const timestamp = formatDateForFilename(Date.now() / 1000);
-            const downloadFilename =
-              `chatgpt_images_${workspaceName}_${timestamp}.zip`;
-            const downloadUrl = `/api/export/${taskId}`;
-
-            const numChunks = Math.ceil(
-              allImages.length / MAX_IMAGES_PER_KV_CHUNK,
-            );
-            const streamTaskMeta: ExportStreamTaskMetadata = {
-              taskId,
-              teamId,
-              includeMetadata,
-              includeThumbnails,
-              status: "ready_for_download",
-              createdAt: Date.now(),
-              filename: downloadFilename,
-              totalImageChunks: numChunks,
-              totalImagesCount: allImages.length,
-            };
-
-            const atomicOp = kv.atomic();
-            atomicOp.set(["export_stream_meta", taskId], streamTaskMeta, {
-              expireIn: KV_EXPIRY_STREAM_DATA,
-            });
-
-            for (let i = 0; i < numChunks; i++) {
-              const chunk = allImages.slice(
-                i * MAX_IMAGES_PER_KV_CHUNK,
-                (i + 1) * MAX_IMAGES_PER_KV_CHUNK,
-              );
-              atomicOp.set(
-                ["export_stream_images", taskId, `chunk_${i}`],
-                chunk,
-                { expireIn: KV_EXPIRY_STREAM_DATA },
-              );
-            }
-            const commitResult = await atomicOp.commit();
-            if (!commitResult.ok) {
-              console.error(
-                `[${taskId}] Atomic commit failed for image chunks.`,
-              );
-              throw new Error("Failed to commit image chunks to KV.");
-            }
-            console.log(
-              `[${taskId}] Stored ${numChunks} image chunks and metadata in KV.`,
-            );
-
-            await sendStatusUpdate({
-              status: "download_ready",
-              downloadUrl: downloadUrl,
-              filename: downloadFilename,
-            });
-
-            sendEvent({
-              type: "download_ready",
-              taskId: taskId,
-              filename: downloadFilename,
-              downloadUrl: downloadUrl,
-              totalImages: allImages.length,
-            });
-          } catch (error) {
-            const errorMessage = error instanceof Error
-              ? error.message
-              : String(error);
-            console.error(`[${taskId}] SSE Processing Error:`, error);
-            await sendStatusUpdate({
-              status: "failed",
-              error: errorMessage,
-            });
-            sendEvent({ type: "error", error: errorMessage, taskId: taskId });
-            try {
-              controller.close();
-            } catch (_e) { /* ignore */ }
-          }
-        },
-        cancel(reason) {
-          console.log(
-            `[SSE ${taskId}] Stream cancelled by client. Reason:`,
-            reason,
-          );
-        },
+          await processExport(controller, taskId, token, teamId, includeMetadata, includeThumbnails, kv);
+        }
       });
-
+      
       return new Response(stream, {
         headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-          "Access-Control-Allow-Origin": "*",
-        },
-      });
-    } catch (error) {
-      console.error("Failed to start export:", error);
-      return Response.json(
-        {
-          error: (error as Error).message || "Failed to start export",
-        },
-        { status: 500 },
-      );
-    }
-  },
-
-  /** Handles DELETE requests to clean up expired export tasks from Deno KV. */
-  async DELETE(_req, _ctx) {
-    try {
-      const kv = await getKv();
-      let cleanedKeysCount = 0;
-      const cutoffTimeSse = Date.now() - 24 * 60 * 60 * 1000;
-      const cutoffTimeStream = Date.now() - 2 * 60 * 60 * 1000;
-      const keysToDelete: Deno.KvKey[] = [];
-
-      const sseIter = kv.list<ExportTaskSseStatusKVSnapshot>({
-        prefix: ["export_tasks_sse"],
-      });
-      for await (const entry of sseIter) {
-        if (entry.value.createdAt < cutoffTimeSse) keysToDelete.push(entry.key);
-      }
-
-      const streamMetaIter = kv.list<ExportStreamTaskMetadata>({
-        prefix: ["export_stream_meta"],
-      });
-      for await (const entry of streamMetaIter) {
-        if (entry.value.createdAt < cutoffTimeStream) {
-          keysToDelete.push(entry.key);
-          const taskId = entry.key[1] as string;
-          for (let i = 0; i < entry.value.totalImageChunks; i++) {
-            keysToDelete.push(["export_stream_images", taskId, `chunk_${i}`]);
-          }
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
         }
-      }
-
-      if (keysToDelete.length > 0) {
-        const atomicOp = kv.atomic();
-        keysToDelete.forEach((key) => atomicOp.delete(key));
-        await atomicOp.commit();
-        cleanedKeysCount = keysToDelete.length;
-        console.log(`[KV Cleanup] Cleaned ${cleanedKeysCount} KV entries.`);
-      } else {
-        console.log(`[KV Cleanup] No expired KV entries found to clean.`);
-      }
-      return Response.json({
-        message: `Cleaned ${cleanedKeysCount} KV entries for expired tasks.`,
       });
+      
     } catch (error) {
-      console.error("Failed to clean tasks:", error);
-      return Response.json(
-        {
-          error: "Failed to clean tasks: " +
-            (error instanceof Error ? error.message : String(error)),
-        },
-        { status: 500 },
-      );
+      console.error("Export error:", error);
+      return Response.json({ error: error.message }, { status: 500 });
     }
-  },
+  }
 };
 
-/** Fetches all image metadata from the ChatGPT API. */
-async function fetchAllImageMetadata(
-  accessToken: string,
+async function checkExistingTask(token: string, teamId: string | undefined, kv: Deno.Kv): Promise<TaskMeta | null> {
+  // 简单的重复任务检查 - 基于token和teamId的hash
+  const key = `${token.slice(-10)}_${teamId || 'personal'}`;
+  const recent = await kv.get<TaskMeta>(['recent_tasks', key]);
+  
+  if (recent.value && recent.value.status === 'ready') {
+    const ageHours = (Date.now() - recent.value.createdAt) / (1000 * 60 * 60);
+    if (ageHours < 2) { // 2小时内的任务可复用
+      return recent.value;
+    }
+  }
+  
+  return null;
+}
+
+async function processExport(
+  controller: ReadableStreamDefaultController,
+  taskId: string,
+  token: string,
   teamId: string | undefined,
-  updateStage: (
-    update: {
-      status: "pending" | "running" | "completed" | "failed";
-      progress: number;
-      currentBatch?: number;
-      totalImages?: number;
-    },
-  ) => Promise<void>,
-): Promise<ImageItem[]> {
-  const client = createChatGPTClient({ 
-    accessToken, 
-    teamId,
-    bypassProxy: true // Force direct API calls for backend operations
-  });
-
-  console.log(`[Meta] Starting metadata fetch for teamId: ${teamId || "personal"}`);
-
-  await updateStage({
-    status: "running",
-    progress: 0,
-    currentBatch: 0,
-    totalImages: 0,
-  });
-
+  includeMetadata: boolean,
+  includeThumbnails: boolean,
+  kv: Deno.Kv
+) {
+  const send = (data: any) => {
+    try {
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
+    } catch (e) {
+      console.error(`[${taskId}] SSE send error:`, e);
+    }
+  };
+  
   try {
+    send({ type: "status", message: "Starting metadata fetch..." });
+    
+    // 获取所有图片元数据
+    const client = createChatGPTClient({ accessToken: token, teamId, bypassProxy: true });
     const allImages = await client.fetchAllImageMetadata({
       teamId,
       onProgress: (progress) => {
-        return updateStage({
-          status: "running",
-          progress: progress.progress,
-          currentBatch: progress.currentBatch,
-          totalImages: progress.totalImages,
+        send({
+          type: "progress",
+          message: `Fetching metadata... ${progress.totalImages} images found`,
+          progress: progress.progress
         });
-      },
+        return Promise.resolve();
+      }
     });
-
-    await updateStage({
-      status: "completed",
-      progress: 100,
+    
+    if (allImages.length === 0) {
+      throw new Error("No images found");
+    }
+    
+    console.log(`[${taskId}] 📊 Found ${allImages.length} images`);
+    send({ type: "status", message: `Found ${allImages.length} images, preparing export...` });
+    
+    // 转换和存储数据
+    const chunkSize = 50;
+    const totalChunks = Math.ceil(allImages.length / chunkSize);
+    
+    const workspace = teamId && teamId !== "personal" ? teamId.substring(0, 10) : "personal";
+    const timestamp = formatDateForFilename(Date.now() / 1000);
+    const filename = `chatgpt_images_${workspace}_${timestamp}.zip`;
+    
+    // 创建任务元数据
+    const taskMeta: TaskMeta = {
+      taskId,
+      teamId,
+      includeMetadata,
+      includeThumbnails,
+      filename,
       totalImages: allImages.length,
-      currentBatch: Math.ceil(allImages.length / 50),
+      totalChunks,
+      status: "preparing",
+      createdAt: Date.now()
+    };
+    
+    // 存储任务信息
+    await kv.set(['tasks', taskId], taskMeta, { expireIn: 2 * 60 * 60 * 1000 });
+    
+    // 分片存储图片数据
+    const ops = kv.atomic();
+    
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, allImages.length);
+      const chunkImages = allImages.slice(start, end);
+      
+      // 转换为简化格式
+      const imageData: ImageData[] = chunkImages.map(img => ({
+        id: img.id,
+        url: img.url,
+        thumbnailUrl: extractThumbnailUrl(img),
+        title: img.title || "Untitled",
+        created_at: img.created_at,
+        width: img.width || 1024,
+        height: img.height || 1024,
+        metadata: includeMetadata ? img.metadata : undefined
+      }));
+      
+      // 存储图片chunk
+      ops.set(['img_chunks', taskId, i], imageData, { expireIn: 2 * 60 * 60 * 1000 });
+      
+      // 如果需要元数据，也存储元数据chunk
+      if (includeMetadata) {
+        ops.set(['meta_chunks', taskId, i], imageData, { expireIn: 2 * 60 * 60 * 1000 });
+      }
+    }
+    
+    // 存储元数据信息
+    if (includeMetadata) {
+      ops.set(['meta_info', taskId], { totalChunks, totalImages: allImages.length }, { expireIn: 2 * 60 * 60 * 1000 });
+    }
+    
+    // 提交所有操作
+    await ops.commit();
+    
+    // 清理内存中的大数组
+    // @ts-ignore
+    allImages.length = 0;
+    
+    // 强制GC
+    try {
+      // @ts-ignore
+      if (globalThis.gc) globalThis.gc();
+    } catch {}
+    
+    // 更新任务状态
+    taskMeta.status = "ready";
+    await kv.set(['tasks', taskId], taskMeta, { expireIn: 2 * 60 * 60 * 1000 });
+    
+    // 缓存为最近任务
+    const key = `${token.slice(-10)}_${teamId || 'personal'}`;
+    await kv.set(['recent_tasks', key], taskMeta, { expireIn: 2 * 60 * 60 * 1000 });
+    
+    console.log(`[${taskId}] ✅ Export ready`);
+    
+    // 发送完成事件
+    send({
+      type: "download_ready",
+      taskId,
+      filename,
+      downloadUrl: `/api/export/${taskId}`,
+      totalImages: allImages.length
     });
-
-    console.log(`[Meta] Fetched ${allImages.length} image metadata items.`);
-    return allImages;
+    
   } catch (error) {
-    console.error(`[Meta] Error fetching metadata:`, error);
-    throw error;
+    console.error(`[${taskId}] Export error:`, error);
+    send({ type: "error", error: error.message });
+  } finally {
+    try {
+      controller.close();
+    } catch (e) {
+      console.error(`[${taskId}] Controller close error:`, e);
+    }
   }
+}
+
+function extractThumbnailUrl(img: any): string | undefined {
+  const paths = [
+    img.encodings?.thumbnail?.path,
+    img.metadata?.encodings?.thumbnail?.path,
+    img.thumbnail?.path
+  ];
+  
+  for (const path of paths) {
+    if (typeof path === 'string' && path.startsWith('http')) {
+      return path;
+    }
+  }
+  
+  return undefined;
 }
