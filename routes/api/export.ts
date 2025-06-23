@@ -361,7 +361,7 @@ async function fetchAllImageMetadata(
   const client = createChatGPTClient({ 
     accessToken, 
     teamId,
-    useProxy: false // Force direct API calls for backend operations
+    bypassProxy: true // Force direct API calls for backend operations
   });
 
   console.log(`[Meta] Starting metadata fetch for teamId: ${teamId || "personal"}`);
