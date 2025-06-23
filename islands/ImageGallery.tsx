@@ -17,6 +17,23 @@ const transformChatGPTResponse = (
 ): GalleryResponse => {
   const items: GalleryImageItem[] = (rawData.items || []).map(
     (item: RawImageItem) => {
+      // 尝试从元数据中提取缩略图路径
+      // deno-lint-ignore no-explicit-any
+      let thumbnailPath = (item as any)?.metadata?.encodings?.thumbnail?.path || "";
+      
+      // 如果主路径位置没有缩略图，尝试查找其他可能的位置
+      if (!thumbnailPath || typeof thumbnailPath !== "string" || !thumbnailPath.startsWith("http")) {
+        // deno-lint-ignore no-explicit-any
+        thumbnailPath = (item as any)?.encodings?.thumbnail?.path || 
+          // deno-lint-ignore no-explicit-any
+          (item as any)?.encodings?.thumbnail?.originalPath || "";
+        
+        console.log(`Using alternative thumbnail path for ${item.id}: ${thumbnailPath}`);
+      }
+      
+      // 确保缩略图路径是有效的 URL
+      const isValidThumbnailUrl = typeof thumbnailPath === "string" && thumbnailPath.startsWith("http");
+      
       return {
         id: item.id,
         url: item.url, // Keep original URL
@@ -29,8 +46,8 @@ const transformChatGPTResponse = (
         metadata: item, // Pass the entire raw response
         encodings: {
           thumbnail: {
-            path: "", // Use proxy URL instead
-            originalPath: undefined,
+            path: isValidThumbnailUrl ? thumbnailPath : item.url, // 只有有效URL才使用缩略图，否则回退到原图
+            originalPath: thumbnailPath,
           },
         },
       };

@@ -21,17 +21,24 @@ export default function GalleryItem(
   { image, onImageClick, getProxyUrl }: GalleryItemProps,
 ) {
   return (
-    <div class="bg-white dark:bg-gray-800 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-all duration-200 hover:-translate-y-1">
-      <div
+    <div class="bg-white dark:bg-gray-800 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-all duration-200 hover:-translate-y-1">      <div
         class="gallery-image-container w-full flex items-center justify-center overflow-hidden rounded-t-lg relative transition-all duration-200 cursor-pointer group hover:shadow-lg"
         onClick={() => onImageClick(image)}
         title={`点击查看 "${image.title || "无标题图像"}"`}
-      >
+      >        
         <img
-          src={getProxyUrl(image.encodings.thumbnail.path || image.url)}
+          src={getProxyUrl(image.encodings?.thumbnail?.path || image.url)}
           alt={image.title || "无标题图像"}
           class="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
           loading="lazy"
+          onError={(e) => {
+            // If thumbnail fails to load, fallback to original image
+            const imgElement = e.currentTarget as HTMLImageElement;
+            if (imgElement.src !== getProxyUrl(image.url)) {
+              console.log(`Thumbnail failed to load, falling back to original for ${image.id}`);
+              imgElement.src = getProxyUrl(image.url);
+            }
+          }}
         />
       </div>
       <div class="p-4">
