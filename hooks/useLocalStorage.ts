@@ -5,6 +5,11 @@ export function useLocalStorage<T>(
   defaultValue: T,
 ): [T, (value: T | ((prev: T) => T)) => void, () => void] {
   const [value, setValue] = useState<T>(() => {
+    // 服务端渲染时直接返回默认值
+    if (typeof globalThis === 'undefined' || typeof localStorage === 'undefined') {
+      return defaultValue;
+    }
+    
     try {
       const item = localStorage.getItem(key);
       if (item === null) {
@@ -22,6 +27,11 @@ export function useLocalStorage<T>(
   });
 
   useEffect(() => {
+    // 只在客户端执行
+    if (typeof localStorage === 'undefined') {
+      return;
+    }
+    
     try {
       const valueToStore =
         typeof value === "string" ? value : JSON.stringify(value);
@@ -32,6 +42,11 @@ export function useLocalStorage<T>(
   }, [key, value]);
 
   const removeStoredValue = () => {
+    if (typeof localStorage === 'undefined') {
+      setValue(defaultValue);
+      return;
+    }
+    
     try {
       setValue(defaultValue);
       localStorage.removeItem(key);
