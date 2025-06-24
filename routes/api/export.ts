@@ -9,11 +9,12 @@ const ExportRequest = z.object({
   token: z.string().min(10),
   teamId: z.string().optional(),
   includeMetadata: z.boolean().default(true),
-  includeThumbnails: z.boolean().default(false),
+  includeThumbnails: z.boolean().default(true),
 });
 
 interface TaskMeta {
   taskId: string;
+  userToken: string; // Store a portion of the user token for identification
   teamId?: string;
   includeMetadata: boolean;
   includeThumbnails: boolean;
@@ -44,19 +45,22 @@ export const handler: Handlers = {
       const taskId = crypto.randomUUID();
       const kv = await getKv();
         console.log(`[${taskId}] 🚀 开始导出任务`);
-      
-      // 检查现有任务
+        // 检查现有任务
       const existing = await checkExistingTask(token, teamId, kv);
       if (existing) {
-        console.log(`[${taskId}] 🎯 找到现有任务: ${existing.taskId}`);
+        // 检查任务是否正在被处理
+        const isProcessing = await isTaskBeingProcessed(existing.taskId, kv);
+        
+        console.log(`[${taskId}] 🎯 找到现有任务: ${existing.taskId}${isProcessing ? ' (正在处理中)' : ''}`);
         return Response.json({
           type: "existing_task_found",
           taskId: existing.taskId,
           filename: existing.filename,
           downloadUrl: `/api/export/${existing.taskId}`,
           totalImages: existing.totalImages,
+          isProcessing: isProcessing,
           ageHours: Math.round((Date.now() - existing.createdAt) / (1000 * 60 * 60)),
-          message: "找到可供下载的导出任务"
+          message: isProcessing ? "找到正在处理的导出任务" : "找到可供下载的导出任务"
         });
       }
       
@@ -77,20 +81,37 @@ export const handler: Handlers = {
       
     } catch (error) {
       console.error("Export error:", error);
-      return Response.json({ error: error.message }, { status: 500 });
+      return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
     }
   }
 };
 
 async function checkExistingTask(token: string, teamId: string | undefined, kv: Deno.Kv): Promise<TaskMeta | null> {
-  // 简单的重复任务检查 - 基于token和teamId的hash
-  const key = `${token.slice(-10)}_${teamId || 'personal'}`;
-  const recent = await kv.get<TaskMeta>(['recent_tasks', key]);
+  // Use last 10 chars of token for consistency
+  const userTokenPart = token.slice(-10);
   
-  if (recent.value && recent.value.status === 'ready') {
-    const ageHours = (Date.now() - recent.value.createdAt) / (1000 * 60 * 60);
-    if (ageHours < 2) { // 2小时内的任务可复用
-      return recent.value;
+  // Look for a recent task with this identifier
+  const entries = kv.list<TaskMeta>({ prefix: ['tasks'] });
+  
+  // Check all tasks for matching user and team
+  for await (const entry of entries) {
+    const task = entry.value;
+    
+    if (task.userToken === userTokenPart && 
+        task.teamId === teamId &&
+        task.status === 'ready') {
+      
+      const ageHours = (Date.now() - task.createdAt) / (1000 * 60 * 60);
+      if (ageHours < 2) { // 2小时内的任务可复用
+        // Check for task lock to avoid reusing active tasks
+        const lockData = await kv.get(['task_lock', task.taskId]);
+        if (lockData.value) {
+          console.log(`[TASK] ⚠️ 任务 ${task.taskId} 正在被处理中，不可重用`);
+          continue; // Skip this task and check the next one
+        }
+        
+        return task;
+      }
     }
   }
   
@@ -106,7 +127,13 @@ async function processExport(
   includeThumbnails: boolean,
   kv: Deno.Kv
 ) {
-  const send = (data: any) => {
+  type EventData = 
+    | { type: "status"; message: string; }
+    | { type: "progress"; message: string; progress: number; }
+    | { type: "download_ready"; taskId: string; filename: string; downloadUrl: string; totalImages: number; thumbnailStats?: { total: number; available: number; } }
+    | { type: "error"; error: string; };
+
+  const send = (data: EventData) => {
     try {
       controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));
     } catch (e) {
@@ -133,8 +160,35 @@ async function processExport(
     if (allImages.length === 0) {
       throw new Error("未找到任何图片");
     }
-      console.log(`[${taskId}] 📊 找到${allImages.length}张图片`);
-    send({ type: "status", message: `找到${allImages.length}张图片，准备导出中...` });
+      console.log(`[${taskId}] 📊 找到${allImages.length}张图片`);    send({ type: "status", message: `找到${allImages.length}张图片，准备导出中...` });
+    
+    // Debug: Log structure of the first image to understand thumbnail structure
+    if (allImages.length > 0) {
+      debugImageStructure(allImages[0]);
+    }
+    
+    // Count available thumbnails
+    let thumbnailCount = 0;
+    let validThumbnailCount = 0;
+    
+    if (includeThumbnails) {
+      console.log(`[${taskId}] 🔍 检查图片缩略图...`);
+      for (const img of allImages) {
+        const thumbnailUrl = extractThumbnailUrl(img);
+        if (thumbnailUrl) {
+          thumbnailCount++;
+          // Validate thumbnail URL format
+          if (thumbnailUrl.startsWith('http')) {
+            validThumbnailCount++;
+          }
+        }
+      }
+      console.log(`[${taskId}] 📊 缩略图统计: ${validThumbnailCount}/${thumbnailCount} 个有效缩略图 (共 ${allImages.length} 张图片)`);
+      send({ 
+        type: "status", 
+        message: `找到${allImages.length}张图片，其中${validThumbnailCount}张有缩略图，准备导出中...` 
+      });
+    }
     
     // Convert and store data with smaller chunks to reduce memory pressure
     const chunkSize = 25; // Reduced from 50 to 25 images per chunk
@@ -147,6 +201,7 @@ async function processExport(
     // 创建任务元数据
     const taskMeta: TaskMeta = {
       taskId,
+      userToken: token.slice(0, 10), // Store a portion of the token for identification
       teamId,
       includeMetadata,
       includeThumbnails,
@@ -257,21 +312,20 @@ async function processExport(
     }
     
     // 更新任务状态
-    taskMeta.status = "ready";
-    await kv.set(['tasks', taskId], taskMeta, { expireIn: 2 * 60 * 60 * 1000 });
+    taskMeta.status = "ready";    await kv.set(['tasks', taskId], taskMeta, { expireIn: 2 * 60 * 60 * 1000 });
     
-    // 缓存为最近任务
-    const key = `${token.slice(-10)}_${teamId || 'personal'}`;
-    await kv.set(['recent_tasks', key], taskMeta, { expireIn: 2 * 60 * 60 * 1000 });
-      console.log(`[${taskId}] ✅ 导出准备就绪`);
-    
-    // 发送完成事件
+    console.log(`[${taskId}] ✅ 导出准备就绪`);
+      // 发送完成事件
     send({
       type: "download_ready",
       taskId,
       filename,
       downloadUrl: `/api/export/${taskId}`,
-      totalImages: allImages.length
+      totalImages: allImages.length,
+      thumbnailStats: includeThumbnails ? { 
+        total: thumbnailCount, 
+        available: validThumbnailCount 
+      } : undefined
     });
       } catch (error) {
     console.error(`[${taskId}] 导出错误:`, error);
@@ -288,6 +342,28 @@ async function processExport(
   }
 }
 
+/**
+ * 检查任务是否正在处理中
+ */
+async function isTaskBeingProcessed(taskId: string, kv: Deno.Kv): Promise<boolean> {
+  const lockKey = ['task_lock', taskId];
+  const lock = await kv.get(lockKey);
+  
+  if (lock.value) {
+    interface LockData {
+      startTime: number;
+      pid: string;
+    }
+    
+    const lockData = lock.value as LockData;
+    const lockAge = Date.now() - (lockData.startTime || 0);
+    // 如果锁的年龄小于5分钟，认为任务正在处理中
+    return lockAge < 5 * 60 * 1000;
+  }
+  
+  return false;
+}
+
 // Fix TypeScript error by using Record for unknown properties
 interface ImageWithEncodings extends ImageItem {
   encodings?: {
@@ -301,17 +377,108 @@ interface ImageWithEncodings extends ImageItem {
   };
 }
 
+// Helper function for debugging image metadata structure
+function debugImageStructure(img: ImageWithEncodings): void {
+  // Only log the most essential information to reduce verbosity
+  const extractedThumbnail = extractThumbnailUrl(img);
+  console.log(`Image ID: ${img.id}`);
+  
+  // Only include detailed logging when running in debug mode or when no thumbnail is found
+  if (!extractedThumbnail) {
+    console.log(`No thumbnail found for image ${img.id}`);
+    
+    // Log a very brief structure to understand what's available
+    const structure = {
+      hasEncodings: !!img.encodings,
+      hasMetadata: !!img.metadata,
+      hasThumbnailField: !!img.thumbnail,
+      hasEncodingsThumbnail: !!img.encodings?.thumbnail,
+      hasMetadataEncodings: !!img.metadata?.encodings
+    };
+    
+    console.log("Image structure:", structure);
+  }
+}
+
 function extractThumbnailUrl(img: ImageWithEncodings): string | undefined {
+  // Common paths based on examining the metadata structure
   const paths = [
     img.encodings?.thumbnail?.path,
     img.metadata?.encodings?.thumbnail?.path,
-    img.thumbnail?.path
+    img.thumbnail?.path,
+    // Check if there's a direct thumbnail property
+    typeof img.thumbnail === 'string' ? img.thumbnail : undefined
   ];
   
+  // First check the known paths
   for (const path of paths) {
     if (typeof path === 'string' && path.startsWith('http')) {
       return path;
     }
+  }
+  
+  // Check if the image URL itself contains a thumbnail version
+  if (img.url && img.url.includes('thumbnail')) {
+    return img.url;
+  }
+  
+  // Deeper search for thumbnails - check the typical ChatGPT structure
+  try {
+    // Try deeper structure search if metadata is available
+    if (img.metadata) {
+      // Convert to string for easier searching
+      const metadataStr = JSON.stringify(img.metadata);
+      
+      // Various patterns to look for thumbnail URLs
+      const patterns = [
+        /"thumbnail".*?path"?\s*:\s*"(https?:\/\/[^"]+)"/,
+        /"(https?:\/\/[^"]+\/thumbnail[^"]*?)"/,
+        /"(https?:\/\/[^"]+_thumb\.[^"]+)"/,
+        /"(https?:\/\/[^"]+\/thumbnails?\/[^"]+)"/,
+        /"originalPath"?\s*:\s*"(https?:\/\/[^"]+)"/
+      ];
+      
+      for (const pattern of patterns) {
+        const match = metadataStr.match(pattern);
+        if (match && match[1] && match[1].startsWith('http')) {
+          return match[1];
+        }
+      }
+    }
+    
+    // Also check the encodings object directly if available
+    if (img.encodings) {
+      const encodingsStr = JSON.stringify(img.encodings);
+      const originalPathMatch = encodingsStr.match(/"originalPath"?\s*:\s*"(https?:\/\/[^"]+)"/);
+      if (originalPathMatch && originalPathMatch[1]) {
+        return originalPathMatch[1];
+      }
+    }
+    
+    // Last resort - search the entire object
+    const fullImgStr = JSON.stringify(img);
+    
+    // Try multiple patterns
+    const patterns = [
+      /https?:\/\/[^"]+thumbnail[^"]+/,
+      /https?:\/\/[^"]+\/thumbnails?\/[^"]+/,
+      /https?:\/\/[^"]+_thumb\.[^"]+/,
+      /"originalPath"?\s*:\s*"(https?:\/\/[^"]+)"/
+    ];
+    
+    for (const pattern of patterns) {
+      const match = fullImgStr.match(pattern);
+      if (match) {
+        // Get the matched URL
+        const url = match[1] || match[0];
+        // Verify it's a proper URL
+        if (typeof url === 'string' && url.startsWith('http')) {
+          return url;
+        }
+      }
+    }
+  } catch (_e) {
+    // Silently ignore errors in thumbnail extraction
   }
   
   return undefined;

@@ -82,8 +82,9 @@ export interface ExistingTaskResponse {
   filename: string;
   downloadUrl: string;
   totalImages: number;
-  createdAt: number;
+  createdAt?: number;
   ageHours: number;
+  isProcessing: boolean;
   message: string;
 }
 
@@ -105,6 +106,10 @@ export interface SseDownloadReadyEvent {
   filename: string;
   downloadUrl: string;
   totalImages: number;
+  thumbnailStats?: {
+    total: number;
+    available: number;
+  };
 }
 
 export interface SseErrorEvent {
@@ -136,5 +141,10 @@ export interface ClientTaskDisplay {
   filename?: string;
   ageHours?: number;
   isExisting?: boolean;
+  isProcessing?: boolean;
+  thumbnailStats?: {
+    total: number;
+    available: number;
+  };
   error?: string;
 }

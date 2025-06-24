@@ -1,17 +1,34 @@
 // islands/ZipExport.tsx - 配合新SSE事件的简化版本
 import { useEffect, useState } from "preact/hooks";
 import { useLocalStorage } from "../hooks/useLocalStorage.ts";
-import type { ClientExportState, ClientTaskDisplay, ExistingTaskResponse, SseEvent } from "../lib/types.ts";
+import type { ClientExportState, ExistingTaskResponse, SseEvent } from "../lib/types.ts";
+
+// Local interface with isProcessing property
+interface ClientTaskDisplay {
+  id?: string;
+  totalImages?: number;
+  downloadUrl?: string;
+  filename?: string;
+  ageHours?: number;
+  isExisting?: boolean;
+  isProcessing?: boolean;
+  thumbnailStats?: {
+    total: number;
+    available: number;
+  };
+  error?: string;
+}
 
 export default function ZipExport() {
   const [state, setState] = useState<ClientExportState>("idle");
   const [task, setTask] = useState<ClientTaskDisplay | null>(null);
   const [message, setMessage] = useState("");
-
   const [accessToken] = useLocalStorage<string>("chatgpt_access_token", "");
   const [teamId] = useLocalStorage<string>("chatgpt_team_id", "personal");
   const [includeMetadata, setIncludeMetadata] = useLocalStorage<boolean>("chatgpt_include_metadata", true);
-  const [includeThumbnails, setIncludeThumbnails] = useLocalStorage<boolean>("chatgpt_include_thumbnails", false);
+  const [includeThumbnails, setIncludeThumbnails] = useLocalStorage<boolean>("chatgpt_include_thumbnails", true);
+  // Add state for tracking download abort controller
+  const [downloadController, setDownloadController] = useState<AbortController | null>(null);
 
   const handleExport = async () => {
     if (!accessToken) {
@@ -43,13 +60,19 @@ export default function ZipExport() {
         throw new Error(errorData.error || "导出失败");
       }
 
-      const contentType = response.headers.get("Content-Type");
-
-      if (contentType?.includes("application/json")) {
+      const contentType = response.headers.get("Content-Type");      if (contentType?.includes("application/json")) {
         // 现有任务
         const existing: ExistingTaskResponse = await response.json();
-        setState("found_existing");
-        setMessage("找到现有任务");
+        
+        // Handle the case where the task is still processing
+        if (existing.isProcessing) {
+          setState("preparing");
+          setMessage("找到正在处理的任务");
+        } else {
+          setState("found_existing");
+          setMessage("找到现有任务");
+        }
+        
         setTask({
           id: existing.taskId,
           totalImages: existing.totalImages,
@@ -57,6 +80,7 @@ export default function ZipExport() {
           filename: existing.filename,
           ageHours: existing.ageHours,
           isExisting: true,
+          isProcessing: existing.isProcessing
         });
       } else if (contentType?.includes("text/event-stream")) {
         // SSE流
@@ -120,9 +144,7 @@ export default function ZipExport() {
       case "progress":
         setState("preparing");
         setMessage(event.message);
-        break;
-
-      case "download_ready":
+        break;      case "download_ready":
         setState("ready");
         setMessage("导出完成，可以下载");
         setTask({
@@ -131,6 +153,7 @@ export default function ZipExport() {
           downloadUrl: event.downloadUrl,
           filename: event.filename,
           isExisting: false,
+          thumbnailStats: event.thumbnailStats
         });
         break;
 
@@ -140,7 +163,6 @@ export default function ZipExport() {
         break;
     }
   };
-
   const handleDownload = () => {
     if (!task?.downloadUrl || !task?.filename) {
       setMessage("下载链接无效");
@@ -150,17 +172,65 @@ export default function ZipExport() {
     setState("downloading");
     setMessage(`正在下载 ${task.filename}...`);
 
-    const link = document.createElement("a");
-    link.href = task.downloadUrl;
-    link.download = task.filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    setTimeout(() => {
+    // Use fetch API instead of anchor element to be able to track and abort downloads
+    const abortController = new AbortController();
+    const downloadStartTime = Date.now();
+    
+    // Store the abort controller in a ref or state if you want to expose it for cancellation
+    // For example: setAbortController(abortController);
+    
+    // Start the download
+    fetch(task.downloadUrl, {
+      signal: abortController.signal,
+      headers: {
+        'Accept': 'application/zip'
+      }
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}`);
+      }
+        // Get file size from headers if available
+      const contentLength = response.headers.get('Content-Length');
+      const _totalSize = contentLength ? parseInt(contentLength, 10) : null;
+      
+      // Create a download link for the response
+      return response.blob().then(blob => {
+        // Create URL for the blob
+        const url = globalThis.URL.createObjectURL(blob);
+        
+        // Create and click a download link
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = task.filename!; // We already checked it's not undefined
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the object URL
+        setTimeout(() => globalThis.URL.revokeObjectURL(url), 100);
+        
+        return blob.size; // Return the size for reporting
+      });
+    })
+    .then((size) => {
+      const downloadDuration = (Date.now() - downloadStartTime) / 1000;
       setState("complete");
-      setMessage(`下载开始: ${task.filename}`);
-    }, 1000);
+      setMessage(`下载完成: ${task.filename} (${(size / 1024 / 1024).toFixed(2)} MB, ${downloadDuration.toFixed(1)}秒)`);
+    })
+    .catch(error => {
+      if (error.name === 'AbortError') {
+        setState("failed");
+        setMessage(`下载已取消: ${task.filename}`);
+      } else {
+        console.error("Download error:", error);
+        setState("failed");
+        setMessage(`下载失败: ${error.message}`);
+      }
+    });
+    
+    // Add a cancel download button if you want this functionality
+    // Usage: abortController.abort() to cancel
   };
 
   const resetState = () => {
@@ -198,9 +268,8 @@ export default function ZipExport() {
         return "";
     }
   };
-
   const isProcessing = ["checking", "preparing", "downloading"].includes(state);
-  const hasDownload = ["found_existing", "ready", "complete"].includes(state) && task?.downloadUrl;
+  const hasDownload = ["found_existing", "ready", "complete"].includes(state) && task?.downloadUrl && !task?.isProcessing;
 
   return (
     <div class="space-y-4">
@@ -218,8 +287,7 @@ export default function ZipExport() {
           />
           包含 metadata.json
         </label>
-        
-        <label class="flex items-center text-sm text-foreground">
+          <label class="flex items-center text-sm text-foreground">
           <input
             type="checkbox"
             checked={includeThumbnails}
@@ -227,13 +295,12 @@ export default function ZipExport() {
             class="mr-2 h-4 w-4"
             disabled={isProcessing}
           />
-          包含缩略图
+          包含缩略图 <span className="ml-1 text-xs text-muted-foreground">(可能不是所有图片都有缩略图)</span>
         </label>
       </div>
 
       {/* 操作按钮 */}
-      <div class="flex gap-3">
-        <button
+      <div class="flex gap-3">        <button
           type="button"
           onClick={handleExport}
           disabled={isProcessing || !accessToken}
@@ -245,7 +312,9 @@ export default function ZipExport() {
         >
           <span class="flex items-center gap-2">
             {getStateIcon()}
-            {isProcessing ? "处理中..." : hasDownload ? "重新检查" : "检查并导出"}
+            {isProcessing ? "处理中..." : 
+              task?.isProcessing ? "正在准备..." : 
+              hasDownload ? "重新检查" : "检查并导出"}
           </span>
         </button>
 
@@ -278,17 +347,24 @@ export default function ZipExport() {
             <span class="text-lg">{getStateIcon()}</span>
             <div class="flex-1">
               <p class="font-medium">{message}</p>
-              
-              {task && state === "found_existing" && (
+                {task && state === "found_existing" && (
                 <div class="mt-2 text-sm">
                   <p>📊 包含 <strong>{task.totalImages}</strong> 张图片</p>
                   <p>🕒 创建于 <strong>{task.ageHours}</strong> 小时前</p>
                 </div>
               )}
               
-              {task && state === "ready" && !task.isExisting && (
+              {task && state === "preparing" && task.isExisting && (
+                <div class="mt-2 text-sm">
+                  <p>⏳ 任务正在处理中，请稍等片刻...</p>
+                  <p>📊 包含 <strong>{task.totalImages}</strong> 张图片</p>
+                </div>
+              )}              {task && state === "ready" && !task.isExisting && (
                 <div class="mt-2 text-sm">
                   <p>🎉 导出完成！包含 <strong>{task.totalImages}</strong> 张图片</p>
+                  {task.thumbnailStats && (
+                    <p>🖼️ 缩略图： <strong>{task.thumbnailStats.available}</strong>/{task.thumbnailStats.total} 张图片拥有可用缩略图</p>
+                  )}
                 </div>
               )}
             </div>
