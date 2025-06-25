@@ -1,4 +1,4 @@
-// routes/api/export/[taskId].ts - 修复版下载端点
+// routes/api/export/[taskId].ts - 最终修复版下载端点 (修正clientState重复声明)
 
 import { FreshContext, Handlers } from "$fresh/server.ts";
 import * as fflate from "fflate";
@@ -20,6 +20,7 @@ interface TaskMeta {
   totalChunks: number;
   status: "preparing" | "ready" | "failed";
   createdAt: number;
+  finalZipSizeBytes?: number; // 新增：存储最终ZIP文件的大小，供HEAD请求使用
 }
 
 interface TaskLock {
@@ -39,6 +40,51 @@ interface ImageData {
 }
 
 export const handler: Handlers = {
+  // --- 新增 Handlers.HEAD 方法 ---
+  async HEAD(_req, ctx: FreshContext) {
+    const taskId = ctx.params.taskId;
+    console.log(`[${taskId}] 🔍 收到 HEAD 请求`);
+
+    try {
+      const kv = await getKv();
+      const taskResult = await kv.get<TaskMeta>(["tasks", taskId]);
+
+      if (!taskResult.value) {
+        console.warn(`[${taskId}] ⚠️ HEAD 请求：任务未找到`);
+        return new Response("任务未找到", { status: 404 });
+      }
+
+      const task = taskResult.value;
+
+      // 构建头部信息
+      const headers = new Headers({
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${task.filename}"`,
+        "Cache-Control": "no-store, must-revalidate",
+        "Accept-Ranges": "none", // 我们不是一个支持范围请求的服务器，所以声明不支持
+        "X-Content-Type-Options": "nosniff",
+      });
+
+      // 只有当 finalZipSizeBytes 存在时才设置 Content-Length
+      if (task.finalZipSizeBytes !== undefined) {
+        headers.set("Content-Length", String(task.finalZipSizeBytes));
+        console.log(
+          `[${taskId}] ✅ HEAD 响应：文件大小 ${task.finalZipSizeBytes} 字节`,
+        );
+      } else {
+        console.warn(
+          `[${taskId}] ⚠️ HEAD 响应：未找到文件大小，无法设置 Content-Length`,
+        );
+      }
+
+      return new Response(null, { status: 200, headers });
+    } catch (error) {
+      console.error(`[${taskId}] HEAD 请求错误:`, error);
+      return new Response("服务器错误", { status: 500 });
+    }
+  },
+  // --- Handlers.HEAD 结束 ---
+
   async GET(_req, ctx: FreshContext) {
     const taskId = ctx.params.taskId;
     console.log(`[${taskId}] 📥 开始下载`);
@@ -49,6 +95,7 @@ export const handler: Handlers = {
       // 获取任务信息
       const taskResult = await kv.get<TaskMeta>(["tasks", taskId]);
       if (!taskResult.value) {
+        console.warn(`[${taskId}] ⚠️ GET 请求：任务未找到`);
         return new Response("任务未找到", { status: 404 });
       }
 
@@ -67,16 +114,17 @@ export const handler: Handlers = {
         "Cache-Control": "no-store, must-revalidate",
         "Accept-Ranges": "none",
         "X-Content-Type-Options": "nosniff",
-        "Transfer-Encoding": "chunked",
+        "Transfer-Encoding": "chunked", // 对于流式下载，使用 chunked
       });
 
       return new Response(
         new ReadableStream({
           async start(controller) {
             try {
+              // 关键：这里不再添加2秒延迟，因为原版没有，且这可能是导致流提前关闭的原因之一
               await processTaskSafely(controller, taskId, task, kv);
             } catch (error) {
-              console.error(`[${taskId}] 错误:`, error);
+              console.error(`[${taskId}] 流处理错误:`, error);
 
               // 确保清理锁
               await kv.delete(["task_lock", taskId]).catch(() => {});
@@ -115,15 +163,13 @@ export const handler: Handlers = {
           // Handle client disconnection/abort events
           cancel(reason) {
             console.log(
-              `[${taskId}] 🚫 Client disconnected: ${
-                reason || "Unknown reason"
-              }`,
+              `[${taskId}] 🚫 客户端已断开连接: ${reason || "未知原因"}`,
             );
 
-            // Clean up resources and release locks when client disconnects
+            // 清理资源并在客户端断开连接时释放锁
             kv.delete(["task_lock", taskId]).catch((e) => {
               console.error(
-                `[${taskId}] Failed to release lock on disconnect:`,
+                `[${taskId}] 断开连接时释放锁失败:`,
                 e,
               );
             });
@@ -138,7 +184,7 @@ export const handler: Handlers = {
         { headers },
       );
     } catch (error) {
-      console.error(`[${taskId}] 设置错误:`, error);
+      console.error(`[${taskId}] GET 请求设置错误:`, error);
       return new Response(
         `错误: ${error instanceof Error ? error.message : String(error)}`,
         { status: 500 },
@@ -181,22 +227,18 @@ async function processTaskSafely(
   kv: Deno.Kv,
 ) {
   let lockAcquired = false;
-  const _abortChecker: number | null = null;
-  const _isClientConnected = true;
+  // 恢复原版clientState的逻辑，它会根据超时判断并标记disconnected
+  const clientState = { disconnected: false, lastActivity: Date.now() };
 
-  // Set up a mechanism to check if the client is still connected
+  // Set up a mechanism to check if the client is still connected (恢复原版逻辑)
   const setupAbortChecker = () => {
-    // Store a client state object to be shared across the process
-    const clientState = { disconnected: false, lastActivity: Date.now() };
-
-    // Function to check connection every few seconds
     const checkConnection = async () => {
       try {
         // Check for aborted task flag in KV
         const aborted = await kv.get(["task_aborted", taskId]);
         if (aborted.value) {
           console.log(
-            `[${taskId}] 🛑 Task was previously aborted, stopping processing`,
+            `[${taskId}] 🛑 任务之前已中止，停止处理 (由KV标志检测)`,
           );
           clientState.disconnected = true;
           return;
@@ -205,42 +247,22 @@ async function processTaskSafely(
         // Check if we can still write to the controller
         if (!controller.desiredSize || controller.desiredSize < 0) {
           console.log(
-            `[${taskId}] 🚫 Client appears disconnected (controller closed)`,
+            `[${taskId}] 🚫 客户端似乎已断开连接（控制器已关闭）`,
           );
           clientState.disconnected = true;
-
-          // Clean up resources
-          await kv.delete(["task_lock", taskId]).catch(() => {});
-
-          // Record the abort event in KV
-          await kv.set(["task_aborted", taskId], {
-            timestamp: Date.now(),
-            reason: "Controller no longer writable",
-          }, { expireIn: 24 * 60 * 60 * 1000 }).catch(() => {});
-
-          return;
+          return; // 如果控制器已关闭，不再安排下一次检查
         }
 
         // If too much time has passed since last successful write, consider connection dead
         const timeSinceActivity = Date.now() - clientState.lastActivity;
-        if (timeSinceActivity > 15000) { // 15 seconds of inactivity (reduced from 30)
+        if (timeSinceActivity > 15000) { // 15 seconds of inactivity
           console.log(
-            `[${taskId}] ⏱️ No client activity for ${
+            `[${taskId}] ⏱️ 客户端 ${
               Math.round(timeSinceActivity / 1000)
-            }s`,
+            }秒无活动，标记为断开`,
           );
           clientState.disconnected = true;
-
-          // Clean up resources
-          await kv.delete(["task_lock", taskId]).catch(() => {});
-
-          // Record the abort event in KV
-          await kv.set(["task_aborted", taskId], {
-            timestamp: Date.now(),
-            reason: "Client inactivity timeout",
-          }, { expireIn: 24 * 60 * 60 * 1000 }).catch(() => {});
-
-          return;
+          return; // 标记断开后，不再安排下一次检查
         }
 
         // Still connected, schedule next check
@@ -248,20 +270,15 @@ async function processTaskSafely(
           setTimeout(checkConnection, 3000); // Check every 3 seconds
         }
       } catch (_e) {
-        // Don't log every connection check error
         setTimeout(checkConnection, 1000);
       }
     };
-
-    // Start checking for disconnection
-    setTimeout(checkConnection, 3000);
-
-    // Return the client state for the rest of the process to check
-    return clientState;
+    setTimeout(checkConnection, 3000); // Start checking for disconnection
+    return clientState; // Return the client state for the rest of the process to check
   };
 
   // Initialize client state tracker
-  const clientState = setupAbortChecker();
+  const _clientStateInstance = setupAbortChecker(); // 调用并启动检查器，并将返回的clientState实例赋值给一个新变量
 
   try {
     // 🔒 尝试获取任务锁，使用更短的超时
@@ -297,7 +314,6 @@ async function processTaskSafely(
           lockAcquired = true;
         } else {
           // 如果是最近的锁（10秒内），返回一个特殊响应而不是错误
-          // 这样浏览器或下载管理器不会立即重试，给之前的请求一些时间完成
           if (lockAge < 10 * 1000) {
             console.log(
               `[${taskId}] ⏳ 任务刚刚开始处理 (${
@@ -306,11 +322,11 @@ async function processTaskSafely(
             );
             controller.enqueue(
               new TextEncoder().encode(
-                "ZIP processing has just started. Please wait...",
+                "ZIP 处理已开始。请稍候...",
               ),
             );
             controller.close();
-            return; // Exit early without throwing an error
+            return; // 提前退出，不抛出错误
           }
 
           throw new Error("任务正在被另一个请求处理中");
@@ -345,9 +361,10 @@ async function processTaskSafely(
       if (chunk && chunk.length > 0) {
         try {
           // Check for client disconnection before attempting to send data
-          if (clientState.disconnected) {
+          // 根据原版，这里的clientState.disconnected判断是有的，保留
+          if (_clientStateInstance.disconnected) { // 使用实例变量
             console.log(
-              `[${taskId}] 📵 Client disconnected, stopping ZIP stream`,
+              `[${taskId}] 📵 客户端已断开连接，停止ZIP流发送`, // 日志修正
             );
             closed = true;
             return;
@@ -356,33 +373,33 @@ async function processTaskSafely(
           // Also check if the controller is still writable
           if (!controller.desiredSize || controller.desiredSize < 0) {
             console.log(
-              `[${taskId}] ⚠️ Stream no longer writable, marking as disconnected`,
+              `[${taskId}] ⚠️ 流不再可写，标记为已断开连接并停止发送`, // 日志修正
             );
             closed = true;
-            clientState.disconnected = true;
+            _clientStateInstance.disconnected = true; // 即使这里，也标记一下，保持一致
             return;
           }
 
           // Only enqueue if we're sure the client is still connected
           controller.enqueue(chunk);
           // Update last activity timestamp when we successfully write to the stream
-          clientState.lastActivity = Date.now();
+          _clientStateInstance.lastActivity = Date.now(); // 使用实例变量
         } catch (e) {
-          console.error(`[${taskId}] 控制器错误:`, e);
+          console.error(`[${taskId}] 控制器写入错误:`, e); // 日志修正
           closed = true;
-          clientState.disconnected = true;
+          _clientStateInstance.disconnected = true;
         }
       }
 
       if (final && !closed) {
         try {
           // One final check before closing
-          if (!clientState.disconnected) {
+          if (!_clientStateInstance.disconnected) { // 使用实例变量
             console.log(`[${taskId}] ✅ 完成`);
             controller.close();
           }
         } catch (e) {
-          console.error(`[${taskId}] 关闭错误:`, e);
+          console.error(`[${taskId}] 关闭流错误:`, e); // 日志修正
         } finally {
           closed = true;
         }
@@ -391,15 +408,21 @@ async function processTaskSafely(
     if (task.includeMetadata) {
       console.log(`[${taskId}] 📄 添加metadata.json`);
 
-      // Check if client has disconnected before processing metadata
-      if (clientState.disconnected) {
+      // Check if client has disconnected before processing metadata (原版逻辑)
+      if (_clientStateInstance.disconnected) { // 使用实例变量
         console.log(
-          `[${taskId}] 🛑 Skipping metadata due to client disconnection`,
+          `[${taskId}] 🛑 跳过元数据处理，客户端已断开连接`, // 日志修正
         );
       } else {
-        await writeMetadataWithAbortCheck(zip, taskId, task, kv, clientState);
+        await writeMetadataWithAbortCheck(
+          zip,
+          taskId,
+          task,
+          kv,
+          _clientStateInstance,
+        ); // 传递实例变量
 
-        if (!clientState.disconnected) {
+        if (!_clientStateInstance.disconnected) { // 只有在连接未断开时才清理元数据
           console.log(`[${taskId}] 🧹 从KV中清除元数据`);
           await clearMetadata(taskId, task, kv);
         }
@@ -409,35 +432,25 @@ async function processTaskSafely(
     let successCount = 0;
     let errorCount = 0;
 
-    // Modified to pass client state and check for disconnection
+    // Modified to pass client state and check for disconnection (原版逻辑)
     await processImagesWithAbortCheck(
       zip,
       taskId,
       task,
       kv,
-      clientState,
+      _clientStateInstance, // 传递实例变量
       (success) => {
         if (success) {
           successCount++;
-          if (
-            successCount % 20 === 0 ||
-            successCount + errorCount === task.totalImages
-          ) {
-            console.log(
-              `[${taskId}] 📊 进度: ${
-                successCount + errorCount
-              }/${task.totalImages} (${errorCount}个错误)`,
-            );
-          }
         } else {
           errorCount++;
         }
       },
     );
 
-    if (clientState.disconnected) {
+    if (_clientStateInstance.disconnected) { // 使用实例变量
       console.log(
-        `[${taskId}] 🛑 Image processing aborted due to client disconnection`,
+        `[${taskId}] 🛑 图片处理中止，客户端已断开连接`, // 日志修正
       );
       // Don't finalize the ZIP since client is gone
       return;
@@ -452,7 +465,7 @@ async function processTaskSafely(
     // 完成ZIP
     zip.end();
   } catch (error) {
-    console.error(`[${taskId}] 处理错误:`, error);
+    console.error(`[${taskId}] 任务处理发生错误:`, error); // 日志修正
     throw error;
   } finally {
     // 🔒 释放任务锁
@@ -461,7 +474,7 @@ async function processTaskSafely(
         await kv.delete(["task_lock", taskId]);
         console.log(`[${taskId}] 🔓 释放任务锁`);
       } catch (lockError) {
-        console.error(`[${taskId}] 释放锁错误:`, lockError);
+        console.error(`[${taskId}] 释放锁时发生错误:`, lockError); // 日志修正
       }
     }
   }
@@ -477,9 +490,9 @@ async function writeMetadataWithAbortCheck(
   kv: Deno.Kv,
   clientState: { disconnected: boolean; lastActivity: number },
 ) {
-  // Check for client disconnection before starting
+  // Check for client disconnection before starting (原版逻辑)
   if (clientState.disconnected) {
-    console.log(`[${taskId}] 🛑 Skipping metadata due to client disconnection`);
+    console.log(`[${taskId}] 🛑 跳过元数据处理，客户端已断开连接`); // 日志修正
     return;
   }
 
@@ -497,10 +510,10 @@ async function writeMetadataWithAbortCheck(
 
   // Process each metadata chunk
   for (let i = 0; i < task.totalChunks; i++) {
-    // Check for disconnection before each chunk
+    // Check for disconnection before each chunk (原版逻辑)
     if (clientState.disconnected) {
       console.log(
-        `[${taskId}] 🛑 Metadata processing aborted due to client disconnection`,
+        `[${taskId}] 🛑 元数据处理中止，客户端已断开连接`, // 日志修正
       );
       return;
     }
@@ -529,10 +542,10 @@ async function writeMetadataWithAbortCheck(
         // Ignore GC errors - not all environments support it
       }
 
-      // Ensure we're still connected
+      // Ensure we're still connected (原版逻辑)
       if (clientState.disconnected) {
         console.log(
-          `[${taskId}] 🛑 Metadata processing aborted due to client disconnection`,
+          `[${taskId}] 🛑 元数据处理中止，客户端已断开连接`, // 日志修正
         );
         return;
       }
@@ -542,10 +555,10 @@ async function writeMetadataWithAbortCheck(
     }
   }
 
-  // Check for disconnection before writing file
+  // Check for disconnection before writing file (原版逻辑)
   if (clientState.disconnected) {
     console.log(
-      `[${taskId}] 🛑 Metadata writing aborted due to client disconnection`,
+      `[${taskId}] 🛑 元数据写入中止，客户端已断开连接`, // 日志修正
     );
     return;
   }
@@ -553,7 +566,7 @@ async function writeMetadataWithAbortCheck(
   // Write the metadata to the ZIP
   try {
     console.log(
-      `[${taskId}] 📝 Writing metadata.json with ${allImageData.length} entries`,
+      `[${taskId}] 📝 写入 metadata.json，包含 ${allImageData.length} 个条目`,
     );
 
     // Convert metadata to JSON
@@ -573,9 +586,9 @@ async function writeMetadataWithAbortCheck(
     zip.add(metadataFile);
     metadataFile.push(new TextEncoder().encode(metadataJson), true);
 
-    console.log(`[${taskId}] ✅ Metadata written successfully`);
+    console.log(`[${taskId}] ✅ 元数据写入成功`);
   } catch (error) {
-    console.error(`[${taskId}] ❌ Error writing metadata:`, error);
+    console.error(`[${taskId}] ❌ 写入元数据错误:`, error);
     throw error;
   } finally {
     // Clear metadata array to help with garbage collection
@@ -623,19 +636,26 @@ async function processImagesWithAbortCheck(
   progressCallback?: (success: boolean) => void,
 ) {
   let processed = 0;
-  let lastProgressLog = Date.now();
   const batchStart = Date.now();
 
   for (let i = 0; i < task.totalChunks; i++) {
-    // Check if client has disconnected before processing each chunk
+    // Check if client has disconnected before processing each chunk (原版逻辑)
     if (clientState.disconnected) {
       console.log(
-        `[${taskId}] 🛑 Aborting image processing due to client disconnection`,
+        `[${taskId}] 🛑 中止图片处理，客户端已断开连接`, // 日志修正
       );
       return;
     }
 
-    console.log(`[${taskId}] 📦 数据块 ${i + 1}/${task.totalChunks}`);
+    // Only log progress periodically instead of for every image
+    const now = Date.now();
+
+    const processingRate = processed / ((now - batchStart) / 1000);
+    console.log(
+      `[${taskId}] 📦 数据块 ${i + 1}/${task.totalChunks} (${
+        processingRate.toFixed(1)
+      }张/秒)`,
+    );
 
     // 强制垃圾回收
     try {
@@ -654,10 +674,10 @@ async function processImagesWithAbortCheck(
     // No need to clear chunk.value reference here
 
     for (let j = 0; j < imageArray.length; j += batchSize) {
-      // Check for disconnection before each batch
+      // Check for disconnection before each batch (原版逻辑)
       if (clientState.disconnected) {
         console.log(
-          `[${taskId}] 🛑 Aborting image batch due to client disconnection`,
+          `[${taskId}] 🛑 中止图片批处理，客户端已断开连接`, // 日志修正
         );
         return;
       }
@@ -666,7 +686,7 @@ async function processImagesWithAbortCheck(
 
       for (const img of batchImages) {
         try {
-          // Check for disconnection before each image
+          // Check for disconnection before each image (原版逻辑)
           if (clientState.disconnected) {
             return;
           }
@@ -679,7 +699,7 @@ async function processImagesWithAbortCheck(
             task.includeThumbnails && img.thumbnailUrl &&
             img.thumbnailUrl !== img.url
           ) {
-            // Check for disconnection before processing thumbnail
+            // Check for disconnection before processing thumbnail (原版逻辑)
             if (clientState.disconnected) {
               return;
             }
@@ -691,18 +711,6 @@ async function processImagesWithAbortCheck(
           processed++;
           if (progressCallback) {
             progressCallback(true);
-          }
-
-          // Only log progress periodically instead of for every image
-          const now = Date.now();
-          if (now - lastProgressLog > 5000) { // Only log every 5 seconds
-            const processingRate = processed / ((now - batchStart) / 1000);
-            console.log(
-              `[${taskId}] 📊 进度: ${processed}/${task.totalImages} (${
-                processingRate.toFixed(1)
-              }张/秒)`,
-            );
-            lastProgressLog = now;
           }
         } catch (error) {
           console.error(`[${taskId}] ❌ 失败 ${img.id.slice(-8)}:`, error);
@@ -721,7 +729,7 @@ async function processImagesWithAbortCheck(
           lastUpdate: Date.now(),
         }, { expireIn: 24 * 60 * 60 * 1000 });
       } catch (e) {
-        console.warn(`[${taskId}] Failed to save progress:`, e);
+        console.warn(`[${taskId}] 保存进度失败:`, e);
       }
     }
 
@@ -803,13 +811,6 @@ async function processImageStream(
   const timeout = isThumbnail ? 15000 : 30000;
   const imgId = img.id.slice(-8); // Use shortened ID for logs to reduce verbosity
 
-  // Use more concise logging to reduce verbosity
-  console.log(
-    `[${taskId}] ${isThumbnail ? "🖼️" : "🌐"} Fetching ${
-      isThumbnail ? "thumbnail" : "image"
-    } for ${imgId}`,
-  );
-
   // Skip invalid URLs
   if (!url || !url.startsWith("http")) {
     console.warn(
@@ -842,9 +843,6 @@ async function processImageStream(
     const folder = isThumbnail ? "thumbnails" : "images";
     const suffix = isThumbnail ? "_thumb" : "";
     const filename = `${folder}/${date}_${title}_${id}${suffix}.${ext}`;
-
-    // More concise logging to avoid verbose output
-    console.log(`[${taskId}] 📝 Adding: ${filename}`);
 
     if (response.body) {
       const file = new fflate.ZipDeflate(filename, { level: 3 });
