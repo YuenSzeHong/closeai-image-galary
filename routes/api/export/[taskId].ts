@@ -142,11 +142,19 @@ export const handler: Handlers = {
                   if (
                     errorMessage.includes("任务正在被另一个请求处理中")
                   ) {
-                    const message = "下载处理中，请稍等一会再点击下载按钮...";
-                    controller.enqueue(new TextEncoder().encode(message));
-                    controller.close();
+                    try {
+                      const message = "下载处理中，请稍等一会再点击下载按钮...";
+                      controller.enqueue(new TextEncoder().encode(message));
+                      controller.close();
+                    } catch (controllerError) {
+                      console.log(`[${taskId}] 控制器已关闭，无法发送重试消息`);
+                    }
                   } else {
-                    controller.error(error);
+                    try {
+                      controller.error(error);
+                    } catch (controllerError) {
+                      console.log(`[${taskId}] 控制器已关闭，无法发送错误`);
+                    }
                   }
                 } else {
                   // Stream is already closed or errored, just log it
@@ -353,7 +361,11 @@ async function processTaskSafely(
         console.error(`[${taskId}] ZIP错误:`, err);
         if (!closed) {
           closed = true;
-          controller.error(new Error(`ZIP错误: ${err.message}`));
+          try {
+            controller.error(new Error(`ZIP错误: ${err.message}`));
+          } catch (controllerError) {
+            console.log(`[${taskId}] 控制器已关闭，无法发送ZIP错误`);
+          }
         }
         return;
       }
@@ -381,9 +393,16 @@ async function processTaskSafely(
           }
 
           // Only enqueue if we're sure the client is still connected
-          controller.enqueue(chunk);
-          // Update last activity timestamp when we successfully write to the stream
-          _clientStateInstance.lastActivity = Date.now(); // 使用实例变量
+          try {
+            controller.enqueue(chunk);
+            // Update last activity timestamp when we successfully write to the stream
+            _clientStateInstance.lastActivity = Date.now(); // 使用实例变量
+          } catch (enqueueError) {
+            console.log(`[${taskId}] ⚠️ 控制器已关闭，无法发送数据块`);
+            closed = true;
+            _clientStateInstance.disconnected = true;
+            return;
+          }
         } catch (e) {
           console.error(`[${taskId}] 控制器写入错误:`, e); // 日志修正
           closed = true;
@@ -649,8 +668,11 @@ async function processImagesWithAbortCheck(
 
     // Only log progress periodically instead of for every image
     const now = Date.now();
-
-    const processingRate = processed / ((now - batchStart) / 1000);
+    const elapsedSeconds = (now - batchStart) / 1000;
+    
+    const processingRate = elapsedSeconds > 0 && processed > 0 
+      ? processed / elapsedSeconds 
+      : 0;
     console.log(
       `[${taskId}] 📦 数据块 ${i + 1}/${task.totalChunks} (${
         processingRate.toFixed(1)
