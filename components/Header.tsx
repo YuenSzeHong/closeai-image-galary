@@ -1,9 +1,4 @@
-import ThemeToggle from "../islands/ThemeToggle.tsx";
-
-
 export default function Header() {
-
-
   return (
     <header class="mb-8">
       <div class="flex justify-between items-center mb-6">

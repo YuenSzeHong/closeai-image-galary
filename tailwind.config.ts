@@ -6,7 +6,8 @@ export default {
   ],
   darkMode: "class", // Use class strategy for manual control
   theme: {
-    extend: {      container: {
+    extend: {
+      container: {
         center: true,
         padding: "2rem",
         screens: {
@@ -58,18 +59,19 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-      },      fontFamily: {
+      },
+      fontFamily: {
         sans: [
-          'Inter',
-          'ui-sans-serif',
-          'system-ui',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          'Segoe UI',
-          'Roboto',
-          'Helvetica Neue',
-          'Arial',
-          'sans-serif',
+          "Inter",
+          "ui-sans-serif",
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Segoe UI",
+          "Roboto",
+          "Helvetica Neue",
+          "Arial",
+          "sans-serif",
         ],
       },
       borderRadius: {

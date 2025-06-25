@@ -23,7 +23,10 @@ export const handler: Handlers = {
   },
 };
 
-async function handleProxyRequest(req: Request, ctx: FreshContext): Promise<Response> {
+async function handleProxyRequest(
+  req: Request,
+  ctx: FreshContext,
+): Promise<Response> {
   try {
     // Extract path from URL params
     const { path } = ctx.params;
@@ -176,4 +179,3 @@ export const OPTIONS = (): Response => {
     },
   });
 };
-

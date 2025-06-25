@@ -79,6 +79,7 @@ const teams = await fetchTeamList("token");
 - **`islands/ImageGallery.tsx`** - 直接调用 `client.fetchImageBatch()`
 
 这种方法提供了：
+
 - 更好的性能（减少网络往返）
 - 简化的错误处理
 - 更直接的数据流

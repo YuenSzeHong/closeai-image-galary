@@ -191,13 +191,13 @@ export default function ZipExport() {
             if (eventData.type === "status") {
               const newDisplayData: ClientTaskDisplay = {
                 id: eventData.id,
-                metadataStatus: eventData.stages.metadata.status,
-                metadataProgress: eventData.stages.metadata.progress,
-                metadataCurrentBatch: eventData.stages.metadata.currentBatch,
-                metadataTotalImages: eventData.stages.metadata.totalImages,
+                metadataStatus: eventData.stages?.metadata?.status,
+                metadataProgress: eventData.stages?.metadata?.progress,
+                metadataCurrentBatch: eventData.stages?.metadata?.currentBatch,
+                metadataTotalImages: eventData.stages?.metadata?.totalImages,
                 overallProgress: eventData.progress,
-                totalImagesFinal:
-                  taskDisplay?.totalImagesFinal || eventData.totalImages,
+                totalImagesFinal: taskDisplay?.totalImagesFinal ||
+                  eventData.totalImages,
                 error: eventData.error,
                 downloadUrl: eventData.downloadUrl,
                 filename: eventData.filename,
@@ -209,13 +209,13 @@ export default function ZipExport() {
                 case "preparing":
                 case "processing":
                   setClientState("preparing_metadata");
-                  if (eventData.stages.metadata.status === "running") {
-                    const batchInfo = eventData.stages.metadata.currentBatch
-                      ? ` (批次 ${eventData.stages.metadata.currentBatch})`
+                  if (eventData.stages?.metadata?.status === "running") {
+                    const batchInfo = eventData.stages?.metadata?.currentBatch
+                      ? ` (批次 ${eventData.stages?.metadata?.currentBatch})`
                       : "";
                     const imageInfo =
-                      eventData.stages.metadata.totalImages !== undefined
-                        ? ` - 已发现 ${eventData.stages.metadata.totalImages} 张图片`
+                      eventData.stages?.metadata?.totalImages !== undefined
+                        ? ` - 已发现 ${eventData.stages?.metadata?.totalImages} 张图片`
                         : "";
                     setMessage(`正在获取图片列表${batchInfo}${imageInfo}`);
                   } else {
@@ -249,7 +249,7 @@ export default function ZipExport() {
                     }),
                   );
                   sseReader?.cancel().catch((e) =>
-                    console.warn("Error cancelling reader on fail:", e),
+                    console.warn("Error cancelling reader on fail:", e)
                   );
                   return;
               }
@@ -290,7 +290,7 @@ export default function ZipExport() {
                 console.warn(
                   "Error cancelling reader on server error event:",
                   e,
-                ),
+                )
               );
               return;
             }
@@ -311,7 +311,7 @@ export default function ZipExport() {
         new CustomEvent("exportError", { detail: { error: errorMessage } }),
       );
       sseReader?.cancel().catch((e) =>
-        console.warn("Error cancelling reader on catch:", e),
+        console.warn("Error cancelling reader on catch:", e)
       );
     }
   };
@@ -397,7 +397,8 @@ export default function ZipExport() {
   };
 
   const getStateColor = () => {
-    switch (clientState) {      case "checking_existing":
+    switch (clientState) {
+      case "checking_existing":
       case "preparing_metadata":
       case "downloading":
         return "border-blue-200 bg-blue-100/50 dark:border-blue-800/30 dark:bg-blue-900/20";
@@ -414,7 +415,8 @@ export default function ZipExport() {
   };
 
   const getTextColor = () => {
-    switch (clientState) {      case "checking_existing":
+    switch (clientState) {
+      case "checking_existing":
       case "preparing_metadata":
       case "downloading":
         return "text-blue-700 dark:text-blue-300";
@@ -432,7 +434,8 @@ export default function ZipExport() {
 
   return (
     <div class="space-y-4">
-      {/* Export Options */}      <div class="bg-card rounded-lg p-4">
+      {/* Export Options */}{" "}
+      <div class="bg-card rounded-lg p-4">
         <h4 class="text-sm font-medium text-card-foreground mb-3">
           导出选项
         </h4>
@@ -481,7 +484,8 @@ export default function ZipExport() {
           onClick={handleExport}
           disabled={isProcessing || !accessToken}
           data-export-trigger
-          title="检查并导出"          class={`flex-1 sm:flex-none px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
+          title="检查并导出"
+          class={`flex-1 sm:flex-none px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
             isProcessing || !accessToken
               ? "bg-muted text-muted-foreground cursor-not-allowed"
               : "bg-primary hover:bg-primary/90 text-primary-foreground shadow hover:shadow-lg"

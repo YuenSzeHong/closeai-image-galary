@@ -10,6 +10,7 @@ import type {
   GalleryResponse,
   RawImageItem,
 } from "../lib/types.ts";
+import { extractThumbnailUrl } from "../utils/metadataUtils.ts";
 
 // Add function to transform raw ChatGPT API response to our format
 const transformChatGPTResponse = (
@@ -17,23 +18,13 @@ const transformChatGPTResponse = (
 ): GalleryResponse => {
   const items: GalleryImageItem[] = (rawData.items || []).map(
     (item: RawImageItem) => {
-      // 尝试从元数据中提取缩略图路径
-      // deno-lint-ignore no-explicit-any
-      let thumbnailPath = (item as any)?.metadata?.encodings?.thumbnail?.path || "";
-      
-      // 如果主路径位置没有缩略图，尝试查找其他可能的位置
-      if (!thumbnailPath || typeof thumbnailPath !== "string" || !thumbnailPath.startsWith("http")) {
-        // deno-lint-ignore no-explicit-any
-        thumbnailPath = (item as any)?.encodings?.thumbnail?.path || 
-          // deno-lint-ignore no-explicit-any
-          (item as any)?.encodings?.thumbnail?.originalPath || "";
-        
-        console.log(`Using alternative thumbnail path for ${item.id}: ${thumbnailPath}`);
-      }
-      
-      // 确保缩略图路径是有效的 URL
-      const isValidThumbnailUrl = typeof thumbnailPath === "string" && thumbnailPath.startsWith("http");
-      
+      // Use the centralized thumbnail extraction utility
+      const thumbnailPath = extractThumbnailUrl(item) || "";
+
+      // Ensure the thumbnail path is a valid URL
+      const isValidThumbnailUrl = typeof thumbnailPath === "string" &&
+        thumbnailPath.startsWith("http");
+
       return {
         id: item.id,
         url: item.url, // Keep original URL
@@ -42,11 +33,22 @@ const transformChatGPTResponse = (
         height: item.height || 512,
         title: item.title || "未命名图像",
         created_at: item.created_at,
-        // Store the complete raw metadata from ChatGPT
-        metadata: item, // Pass the entire raw response
+        // Store additional metadata fields from the raw response
+        metadata: {
+          ...item,
+          kind: item.kind || "",
+          generation_id: item.generation_id || "",
+          generation_type: item.generation_type || "",
+          source: item.source || "",
+          prompt: item.prompt,
+          conversation_id: item.conversation_id || "",
+          message_id: item.message_id || "",
+          transformation_id: item.transformation_id || "",
+          asset_pointer: item.asset_pointer || "",
+        },
         encodings: {
           thumbnail: {
-            path: isValidThumbnailUrl ? thumbnailPath : item.url, // 只有有效URL才使用缩略图，否则回退到原图
+            path: isValidThumbnailUrl ? thumbnailPath : item.url, // Only use thumbnail if it's a valid URL, otherwise fallback to original
             originalPath: thumbnailPath,
           },
         },
@@ -140,7 +142,6 @@ export default function ImageGallery() {
   const [teamId] = useLocalStorage<string>("chatgpt_team_id", "personal");
   const [batchSize] = useLocalStorage<number>("chatgpt_batch_size", 50);
 
-
   const getProxyUrl = (originalUrl: string) => {
     return `/api/image?url=${encodeURIComponent(originalUrl)}`;
   };
@@ -192,30 +193,31 @@ export default function ImageGallery() {
       setHasMore(true);
       setImages([]);
       setLoadingStats({ totalBatches: 0, totalImages: 0, failedBatches: 0 });
-    }      try {
-        // First check cache
-        const cachedImages = getCachedImages(teamId);
-        if (cachedImages && cachedImages.length > 0 && !reset) {
-          console.log("Loaded images from cache:", cachedImages.length);
-          setImages(cachedImages);
-          setHasMore(false);
-          // Emit event to show cache was used
-          globalThis.dispatchEvent(
-            new CustomEvent("progressUpdate", {
-              detail: {
-                isLoading: false,
-                totalBatches: 0,
-                totalImages: cachedImages.length,
-                failedBatches: 0,
-                currentStatus: `从缓存加载了 ${cachedImages.length} 张图像`,
-                fromCache: true,
-              },
-            }),
-          );
-          return;
-        }
+    }
+    try {
+      // First check cache
+      const cachedImages = getCachedImages(teamId);
+      if (cachedImages && cachedImages.length > 0 && !reset) {
+        console.log("Loaded images from cache:", cachedImages.length);
+        setImages(cachedImages);
+        setHasMore(false);
+        // Emit event to show cache was used
+        globalThis.dispatchEvent(
+          new CustomEvent("progressUpdate", {
+            detail: {
+              isLoading: false,
+              totalBatches: 0,
+              totalImages: cachedImages.length,
+              failedBatches: 0,
+              currentStatus: `从缓存加载了 ${cachedImages.length} 张图像`,
+              fromCache: true,
+            },
+          }),
+        );
+        return;
+      }
 
-        const allImages: GalleryImageItem[] = reset ? [] : [...images];
+      const allImages: GalleryImageItem[] = reset ? [] : [...images];
       let currentCursor = reset ? null : cursor;
       let batchCount = 0;
       let failedCount = 0;
@@ -434,14 +436,14 @@ export default function ImageGallery() {
     };
 
     globalThis.addEventListener("settingsSaved", handleSettingsSaved);
-    globalThis.addEventListener("dataCleared", handleDataCleared); 
-    
+    globalThis.addEventListener("dataCleared", handleDataCleared);
+
     // Clear images and reload when key parameters change
     setImages([]);
     setCursor(null);
     setHasMore(true);
     setLoadingStats({ totalBatches: 0, totalImages: 0, failedBatches: 0 });
-    
+
     // Initial load
     if (accessToken) {
       loadAllImages(true);

@@ -10,13 +10,15 @@ declare global {
       duration?: number,
     ) => void;
   }
-  
+
   // eslint-disable-next-line no-var
-  var showNotification: ((
-    message: string,
-    type?: "success" | "error" | "info",
-    duration?: number,
-  ) => void) | undefined;
+  var showNotification:
+    | ((
+      message: string,
+      type?: "success" | "error" | "info",
+      duration?: number,
+    ) => void)
+    | undefined;
 }
 
 interface NotificationItem {
@@ -57,14 +59,32 @@ export default function NotificationManager() {
       globalThis.showNotification?.(`导出错误: ${error}`, "error", 5000);
     };
 
-    globalThis.addEventListener("exportStart", handleExportStart as EventListener);
-    globalThis.addEventListener("exportSuccess", handleExportSuccess as EventListener);
-    globalThis.addEventListener("exportError", handleExportError as EventListener);
+    globalThis.addEventListener(
+      "exportStart",
+      handleExportStart as EventListener,
+    );
+    globalThis.addEventListener(
+      "exportSuccess",
+      handleExportSuccess as EventListener,
+    );
+    globalThis.addEventListener(
+      "exportError",
+      handleExportError as EventListener,
+    );
 
     return () => {
-      globalThis.removeEventListener("exportStart", handleExportStart as EventListener);
-      globalThis.removeEventListener("exportSuccess", handleExportSuccess as EventListener);
-      globalThis.removeEventListener("exportError", handleExportError as EventListener);
+      globalThis.removeEventListener(
+        "exportStart",
+        handleExportStart as EventListener,
+      );
+      globalThis.removeEventListener(
+        "exportSuccess",
+        handleExportSuccess as EventListener,
+      );
+      globalThis.removeEventListener(
+        "exportError",
+        handleExportError as EventListener,
+      );
       globalThis.showNotification = undefined;
     };
   }, []);

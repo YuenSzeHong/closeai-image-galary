@@ -71,7 +71,8 @@ export default function ImageModal({
     const isUrl = typeof field.value === "string" &&
       field.value.startsWith("http");
 
-    return (      <div class="border-b border-border pb-2">
+    return (
+      <div class="border-b border-border pb-2">
         <div class="text-muted-foreground font-medium text-xs uppercase tracking-wide mb-1">
           {field.label}
         </div>
@@ -174,7 +175,8 @@ export default function ImageModal({
     }
   };
 
-  return (      <div
+  return (
+    <div
       id="imageModal"
       class={`fixed inset-0 bg-background/80 backdrop-blur-sm z-50 ${
         isOpen ? "flex" : "hidden"
@@ -245,7 +247,8 @@ export default function ImageModal({
           {currentImage
             ? (
               <>
-                {imageLoading && (                  <div class="absolute inset-0 bg-muted rounded animate-pulse flex items-center justify-center">
+                {imageLoading && (
+                  <div class="absolute inset-0 bg-muted rounded animate-pulse flex items-center justify-center">
                     <div class="text-muted-foreground text-lg font-medium">
                       加载中...
                     </div>
@@ -290,7 +293,8 @@ export default function ImageModal({
                 </div>
               </div>
             )}
-        </div>        {/* Metadata Panel */}
+        </div>{" "}
+        {/* Metadata Panel */}
         <div
           id="metadataPanel"
           class={`absolute top-0 right-0 h-full w-96 bg-popover backdrop-blur-sm border-l border-border ${

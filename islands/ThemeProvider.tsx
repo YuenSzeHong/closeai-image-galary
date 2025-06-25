@@ -4,7 +4,7 @@ export default function ThemeProvider() {
   useEffect(() => {
     // Initialize theme based on stored preference or system default
     const storedTheme = localStorage.getItem("theme");
-    
+
     if (storedTheme === "dark") {
       document.documentElement.classList.add("dark");
     } else if (storedTheme === "light") {
@@ -20,7 +20,7 @@ export default function ThemeProvider() {
 
     // Listen for system theme changes
     const mediaQuery = globalThis.matchMedia("(prefers-color-scheme: dark)");
-    
+
     const handleSystemThemeChange = () => {
       // Only apply system preference if user hasn't set a manual preference
       if (!localStorage.getItem("theme")) {
@@ -33,7 +33,8 @@ export default function ThemeProvider() {
     };
 
     mediaQuery.addEventListener("change", handleSystemThemeChange);
-    return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
+    return () =>
+      mediaQuery.removeEventListener("change", handleSystemThemeChange);
   }, []);
 
   return null; // This component doesn't render anything

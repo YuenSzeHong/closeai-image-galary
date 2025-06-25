@@ -4,11 +4,10 @@ import ImageGallery from "../islands/ImageGallery.tsx";
 import ProgressBar from "../islands/ProgressBar.tsx";
 
 export default function Home() {
-  
-
   return (
     <>
-      <Head>        <title>CloseAI 图库</title>
+      <Head>
+        <title>CloseAI 图库</title>
         <meta name="description" content="查看您在 ChatGPT 中生成的所有图像" />
       </Head>
 

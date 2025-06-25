@@ -1,6 +1,7 @@
 # CloseAI 图库
 
-一个轻量级的 ChatGPT 图片管理应用，基于 Fresh 框架构建。支持批量导出、多语言界面、团队账户管理等功能。
+一个轻量级的 ChatGPT 图片管理应用，基于 Fresh
+框架构建。支持批量导出、多语言界面、团队账户管理等功能。
 
 ## 功能特性
 
@@ -9,6 +10,10 @@
 - 👥 **团队支持**: 支持 ChatGPT 团队工作区
 - 🎨 **现代界面**: 响应式设计，支持深色模式
 - ⚡ **高性能**: 基于 Fresh 框架，边缘渲染优化
+
+## 文档
+
+- [API 架构](./CHATGPT_API_ARCHITECTURE.md) - 详细的 API 集成架构和使用指南
 
 ## 快速开始
 
@@ -54,7 +59,7 @@ deno task preview    # 预览构建结果
 
 ## 项目结构
 
-```
+```text
 ├── routes/          # 页面路由和 API 端点
 │   ├── api/         # API 路由
 │   │   ├── export.ts      # 导出任务管理
@@ -86,8 +91,8 @@ deno task preview    # 预览构建结果
 
 ## API 架构
 
-项目使用统一的 ChatGPT API 客户端架构，详见 [API 架构文档](CHATGPT_API_ARCHITECTURE.md)。
-
+项目使用统一的 ChatGPT API 客户端架构，详见
+[API 架构文档](CHATGPT_API_ARCHITECTURE.md)。
 
 ## 贡献指南
 
@@ -99,4 +104,5 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ---
 
-**开发者**: YuenSzeHong | **仓库**: [https://github.com/YuenSzeHong/closeai-image-galary](https://github.com/YuenSzeHong/closeai-image-galary)
+**开发者**: YuenSzeHong | **仓库**:
+[https://github.com/YuenSzeHong/closeai-image-galary](https://github.com/YuenSzeHong/closeai-image-galary)

@@ -1,7 +1,6 @@
 // lib/chatgpt-client.ts - ChatGPT API Client Library
 
 import { z } from "zod";
-import { directChatGPTCall } from "../utils/metadataUtils.ts";
 import type {
   ImageBatchResponse,
   ImageItem,
@@ -111,78 +110,7 @@ export class ChatGPTClient {
     return this.config.bypassProxy ? CHATGPT_BASE_URL : CHATGPT_PROXY_BASE_URL;
   }
 
-  private async fetchRequest<T>(
-    path: string,
-    options: {
-      method?: "GET" | "POST" | "PUT" | "DELETE";
-      body?: unknown;
-      teamId?: string;
-      timeout?: number;
-    } = {},
-  ): Promise<T> {
-    const {
-      method = "GET",
-      body,
-      teamId = this.config.teamId,
-      timeout = this.config.timeout,
-    } = options;
-
-    if (this.config.bypassProxy) {
-      // Use centralized direct API call implementation
-      return directChatGPTCall<T>(path, {
-        method,
-        accessToken: this.config.accessToken,
-        teamId,
-        body,
-      });
-    }
-
-    // Proxy implementation remains the same
-    const headers: HeadersInit = {
-      "x-access-token": this.config.accessToken,
-      ...(teamId && { "x-team-id": teamId }),
-    };
-
-    if (body) {
-      headers["Content-Type"] = "application/json";
-    }
-
-    const url = `${this.getBaseUrl()}/${path.replace(/^\//, "")}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-    try {
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new ChatGPTApiError(
-          `API request failed: ${response.status} ${response.statusText}`,
-          response.status,
-          response.status === 403,
-          response.status === 401,
-          response.status === 429,
-        );
-      }
-
-      return (await response.json()) as T;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  /**
-   * Clean token format (remove "Bearer " prefix if present)
-   */
-  private cleanToken(token: string): string {
-    return token.startsWith("Bearer ")
-      ? token.substring(7).trim()
-      : token.trim();
-  }
+  // Using the global cleanToken function
 
   /**
    * Validate if a team ID is considered "personal"
@@ -222,9 +150,10 @@ export class ChatGPTClient {
       `ChatGPT API 错误：${response.status} ${response.statusText}`,
       response.status,
     );
-  }  /**
+  } /**
    * Fetch a single batch of images
    */
+
   async fetchImageBatch(
     options: FetchImageBatchOptions = {},
   ): Promise<ImageBatchResponse> {
@@ -233,7 +162,8 @@ export class ChatGPTClient {
 
     // Create URL and params based on whether we're using proxy or direct API
     let targetUrl: URL;
-    let headers: HeadersInit;    if (!this.config.bypassProxy) {
+    let headers: HeadersInit;
+    if (!this.config.bypassProxy) {
       // Use proxy route
       const baseUrl = globalThis.location?.origin || "http://localhost:8000";
       targetUrl = new URL(
@@ -302,12 +232,14 @@ export class ChatGPTClient {
     }
 
     return data;
-  }  /**
+  } /**
    * Fetch team/account list
    */
+
   async fetchTeamList(): Promise<TeamAccount[]> {
     let targetUrl: URL;
-    let headers: HeadersInit;    if (!this.config.bypassProxy) {
+    let headers: HeadersInit;
+    if (!this.config.bypassProxy) {
       // Use proxy route
       const baseUrl = globalThis.location?.origin || "http://localhost:8000";
       targetUrl = new URL(
@@ -440,16 +372,11 @@ export class ChatGPTClient {
         } else {
           consecutiveEmptyBatches = 0;
           const newImages = data.items
-            .map((item: RawImageItem): ImageItem | null => {
+            .map((item: RawImageItem): RawImageItem | null => {
+              // Validate the item has required fields
               if (!item.id || !item.url || !item.created_at) return null;
-              return {
-                id: item.id,
-                url: item.url,
-                title: item.title || "",
-                created_at: item.created_at,
-                width: item.width || 0,
-                height: item.height || 0,
-              };
+              // Return the full item - preserve all fields
+              return item;
             })
             .filter((item): item is ImageItem => item !== null);
 
@@ -533,8 +460,6 @@ export type {
   GalleryResponse,
   ImageBatchResponse,
   ImageItem,
-  ImageMetadata,
   RawImageItem,
   TeamAccount,
-  TeamInfo,
 } from "./types.ts";

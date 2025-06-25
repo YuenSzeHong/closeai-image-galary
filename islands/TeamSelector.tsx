@@ -15,7 +15,6 @@ export default function TeamSelector({
   onTeamChange,
   className = "",
 }: TeamSelectorProps) {
-  
   const [teams, setTeams] = useState<TeamAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

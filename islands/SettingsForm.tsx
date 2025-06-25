@@ -4,7 +4,6 @@ import TeamSelector from "./TeamSelector.tsx";
 import { cleanToken } from "../lib/chatgpt-client.ts";
 
 export default function SettingsForm() {
-  
   const [token, setToken] = useLocalStorage<string>("chatgpt_access_token", "");
   const [teamId, setTeamId] = useLocalStorage<string>(
     "chatgpt_team_id",
@@ -43,7 +42,8 @@ export default function SettingsForm() {
     }
 
     hideError();
-    setIsLoading(true);    try {
+    setIsLoading(true);
+    try {
       // Validate token using the centralized cleanToken utility
       const cleanedToken = cleanToken(token);
 
@@ -109,8 +109,7 @@ export default function SettingsForm() {
               : "bg-primary-500 text-white hover:bg-primary-600"
           }`}
         >
-          {isLoading            ? "加载中..."
-            : "保存设置并加载图像"}
+          {isLoading ? "加载中..." : "保存设置并加载图像"}
         </button>
         <div class="flex items-center gap-2">
           <label
@@ -126,9 +125,10 @@ export default function SettingsForm() {
             max="1000"
             step="1"
             value={batchSize}
-            onInput={(e) => setBatchSize(
-              parseInt((e.target as HTMLInputElement).value) || 50,
-            )}
+            onInput={(e) =>
+              setBatchSize(
+                parseInt((e.target as HTMLInputElement).value) || 50,
+              )}
             class="w-24 p-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
           />
           <span class="text-xs text-gray-400 dark:text-gray-500">

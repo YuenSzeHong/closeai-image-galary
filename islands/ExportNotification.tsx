@@ -32,7 +32,10 @@ export default function ExportNotification() {
         type: "progress",
       });
       // Auto-hide after a short delay
-      setTimeout(() => setState((prev) => ({ ...prev, isVisible: false })), 3000);
+      setTimeout(
+        () => setState((prev) => ({ ...prev, isVisible: false })),
+        3000,
+      );
     };
 
     const handleExportReady = (event: Event) => {

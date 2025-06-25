@@ -18,7 +18,7 @@ export function fetchChatGPTImages(
 ): Promise<ImageItem[]> {
   const client = getCachedClient(accessToken, {
     teamId: options?.teamId,
-    bypassProxy: false // Use proxy for client-side operations
+    bypassProxy: false, // Use proxy for client-side operations
   });
 
   const maxBatches = options?.maxImages
@@ -46,7 +46,7 @@ export function fetchChatGPTImages(
  */
 export function getChatGPTTeams(accessToken: string) {
   const client = getCachedClient(accessToken, {
-    bypassProxy: false // Use proxy for client-side operations
+    bypassProxy: false, // Use proxy for client-side operations
   });
   return client.fetchTeamList();
 }
@@ -61,7 +61,7 @@ export async function validateChatGPTToken(
   try {
     const client = getCachedClient(accessToken, {
       teamId,
-      bypassProxy: false // Use proxy for client-side operations
+      bypassProxy: false, // Use proxy for client-side operations
     });
     // Try to fetch a small batch to validate the token
     await client.fetchImageBatch({ limit: 1 });

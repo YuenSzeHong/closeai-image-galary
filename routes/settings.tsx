@@ -4,12 +4,14 @@ import SettingsForm from "../islands/SettingsForm.tsx";
 import ZipExport from "../islands/ZipExport.tsx";
 
 export default function Settings() {
-  
-
   return (
     <>
-      <Head>        <title>设置 - CloseAI 图库</title>
-        <meta name="description" content="配置您的 ChatGPT API 设置和数据管理选项" />
+      <Head>
+        <title>设置 - CloseAI 图库</title>
+        <meta
+          name="description"
+          content="配置您的 ChatGPT API 设置和数据管理选项"
+        />
       </Head>
 
       <div class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 transition-colors duration-300 min-h-screen">
