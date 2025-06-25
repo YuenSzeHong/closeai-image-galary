@@ -113,13 +113,12 @@ export interface ExistingTaskResponse {
 // SSE事件类型 - 简化版本
 export interface SseProgressEvent {
   type: "progress";
-  message: string;
   progress: number;
+  totalImages?: number;
 }
 
 export interface SseStatusEvent {
   type: "status";
-  message: string;
   id?: string;
   progress?: number;
   totalImages?: number;
@@ -127,6 +126,9 @@ export interface SseStatusEvent {
   downloadUrl?: string;
   error?: string;
   status?: string;
+  phase?: string;
+  thumbnailsWith?: number;
+  thumbnailsWithout?: number;
   stages?: {
     metadata: {
       status: "completed" | "running" | "pending" | "failed";

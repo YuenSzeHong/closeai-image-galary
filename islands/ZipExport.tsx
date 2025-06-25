@@ -174,9 +174,7 @@ export default function ZipExport() {
           event.phase === "thumbnail_check" &&
           typeof event.totalImages === "number"
         ) {
-          setMessage(
-            `找到${event.totalImages}张图片，其中${event.thumbnailsWith}/${event.totalImages}张有缩略图，准备导出中...`,
-          );
+          setMessage(`找到${event.totalImages}张图片，检查缩略图中...`);
         } else {
           setMessage("正在准备导出...");
         }
@@ -203,7 +201,6 @@ export default function ZipExport() {
           downloadUrl: event.downloadUrl,
           filename: event.filename,
           isExisting: false,
-          thumbnailStats: event.thumbnailStats,
           missingThumbnails: event.missingThumbnails,
         });
         break;
