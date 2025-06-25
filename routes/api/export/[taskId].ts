@@ -23,11 +23,18 @@ interface TaskMeta {
   finalZipSizeBytes?: number; // 新增：存储最终ZIP文件的大小，供HEAD请求使用
 }
 
-interface ActiveConnection {
+interface ActiveDownload {
+  taskId: string;
   connectionId: string;
+  controller: ReadableStreamDefaultController;
   startTime: number;
   userAgent?: string;
+  isDownloadManager: boolean;
+  disconnected: boolean;
 }
+
+// 全局管理活跃的下载连接 - 每个任务同时只允许一个下载
+const activeDownloads = new Map<string, ActiveDownload>();
 
 interface ImageData {
   id: string;
@@ -117,45 +124,61 @@ export const handler: Handlers = {
         `[${taskId}] 📊 找到${task.totalImages}张图片，分布在${task.totalChunks}个数据块中`,
       );
 
-      // 清理旧的中止标志，开始新的下载任务
-      await kv.delete(["task_aborted", taskId]);
+      // 检查是否已有活跃的下载连接 - 如果有则断开旧连接
+      const existingDownload = activeDownloads.get(taskId);
+      if (existingDownload) {
+        const ageSeconds = (Date.now() - existingDownload.startTime) / 1000;
+        console.log(`[${taskId}] 🔄 断开旧连接 (${existingDownload.connectionId.slice(-8)}, ${ageSeconds.toFixed(1)}秒前开始)`);
+        
+        // 标记旧连接为断开
+        existingDownload.disconnected = true;
+        
+        // 尝试关闭旧的控制器
+        try {
+          existingDownload.controller.error(new Error("新连接接管"));
+        } catch (e) {
+          console.log(`[${taskId}] 旧控制器已关闭: ${e instanceof Error ? e.message : e}`);
+        }
+        
+        // 从活跃下载中移除
+        activeDownloads.delete(taskId);
+      }
 
       // 创建流式响应
       const headers = new Headers({
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename="${task.filename}"`,
         "Cache-Control": "no-store, must-revalidate",
-        "Accept-Ranges": "none",
+        "Accept-Ranges": "none", // 告诉IDM不支持范围请求
         "X-Content-Type-Options": "nosniff",
-        "Transfer-Encoding": "chunked", // 对于流式下载，使用 chunked
+        "Transfer-Encoding": "chunked",
+        "Connection": "close", // 告诉IDM这是单线程连接
       });
-
-      // 后来的请求接管：检查是否有现有连接，如果有就接管
-      await handleRequestTakeover(kv, taskId, connectionId, isDownloadManager);
-
-      // 注册活跃连接
-      await registerConnection(
-        kv,
-        taskId,
-        connectionId,
-        req.headers.get("user-agent"),
-        isDownloadManager,
-      );
 
       return new Response(
         new ReadableStream({
           async start(controller) {
+            // 注册活跃下载
+            const download: ActiveDownload = {
+              taskId,
+              connectionId,
+              controller,
+              startTime: Date.now(),
+              userAgent: req.headers.get("user-agent") || undefined,
+              isDownloadManager,
+              disconnected: false,
+            };
+            activeDownloads.set(taskId, download);
+            console.log(`[${taskId}] 🔗 注册活跃下载连接 (${connectionId.slice(-8)}) ${isDownloadManager ? "[IDM]" : "[浏览器]"}`);
+
             try {
-              // 关键：这里不再添加2秒延迟，因为原版没有，且这可能是导致流提前关闭的原因之一
               await processTaskSafely(
-                controller,
-                taskId,
+                download,
                 task,
                 kv,
-                connectionId,
               );
             } catch (error) {
-              console.error(`[${taskId}] 流处理错误:`, error);
+              console.error(`[${taskId}] 流处理错误: ${error instanceof Error ? error.message : error}`, error);
 
               // Check if the stream is still writable before trying to send an error
               try {
@@ -188,23 +211,12 @@ export const handler: Handlers = {
               }`,
             );
 
-            // 注销连接并检查是否还有其他活跃连接
-            const shouldAbort = await unregisterConnection(
-              kv,
-              taskId,
-              connectionId,
-            );
-
-            if (shouldAbort) {
-              console.log(`[${taskId}] 所有连接已断开，中止任务`);
-
-              // Store abort event in KV for tracking
-              kv.set(["task_aborted", taskId], {
-                timestamp: Date.now(),
-                reason: String(reason || "All clients disconnected"),
-              }, { expireIn: 24 * 60 * 60 * 1000 }).catch(() => {});
-            } else {
-              console.log(`[${taskId}] 还有其他连接活跃，继续处理`);
+            // 标记连接为断开
+            const activeDownload = activeDownloads.get(taskId);
+            if (activeDownload && activeDownload.connectionId === connectionId) {
+              activeDownload.disconnected = true;
+              activeDownloads.delete(taskId);
+              console.log(`[${taskId}] 🧹 清理活跃下载连接 (${connectionId.slice(-8)})`);
             }
           },
         }),
@@ -220,213 +232,18 @@ export const handler: Handlers = {
   },
 };
 
-/**
- * 处理请求接管逻辑
- */
-async function handleRequestTakeover(
-  kv: Deno.Kv,
-  taskId: string,
-  newConnectionId: string,
-  isDownloadManager: boolean,
-): Promise<boolean> {
-  try {
-    // 检查现有的活跃连接
-    const connections = kv.list<ActiveConnection>({
-      prefix: ["active_connections", taskId],
-    });
-    const existingConnections = [];
 
-    for await (const connection of connections) {
-      existingConnections.push(connection);
-    }
 
-    if (existingConnections.length > 0) {
-      console.log(
-        `[${taskId}] 🔄 检测到 ${existingConnections.length} 个现有连接，新请求将接管`,
-      );
-
-      // 标记所有现有连接应该被接管
-      for (const connection of existingConnections) {
-        await kv.set([
-          "connection_takeover",
-          taskId,
-          connection.value.connectionId,
-        ], {
-          takenOverBy: newConnectionId,
-          timestamp: Date.now(),
-        }, { expireIn: 60 * 1000 }); // 1分钟过期
-
-        console.log(
-          `[${taskId}] 🔄 标记连接 ${
-            connection.value.connectionId.slice(-8)
-          } 被接管`,
-        );
-      }
-
-      // 设置接管标志，让旧的请求知道被接管了
-      await kv.set(["task_takeover", taskId], {
-        newConnectionId,
-        timestamp: Date.now(),
-        isDownloadManager,
-      }, { expireIn: 60 * 1000 });
-
-      return true; // 表示发生了接管
-    }
-
-    return false; // 没有现有连接，不需要接管
-  } catch (error) {
-    console.warn(`[${taskId}] 处理请求接管失败:`, error);
-    return false;
-  }
-}
-
-/**
- * 注册活跃连接
- */
-async function registerConnection(
-  kv: Deno.Kv,
-  taskId: string,
-  connectionId: string,
-  userAgent?: string | null,
-  isDownloadManager?: boolean,
-): Promise<void> {
-  try {
-    const connection: ActiveConnection = {
-      connectionId,
-      startTime: Date.now(),
-      userAgent: userAgent || undefined,
-    };
-
-    await kv.set(["active_connections", taskId, connectionId], connection, {
-      expireIn: 60 * 60 * 1000,
-    }); // 1小时过期
-    console.log(
-      `[${taskId}] 注册连接 ${connectionId.slice(-8)} ${
-        isDownloadManager ? "[IDM]" : "[浏览器]"
-      }`,
-    );
-  } catch (error) {
-    console.warn(`[${taskId}] 注册连接失败:`, error);
-  }
-}
-
-/**
- * 注销连接并返回是否应该中止任务
- */
-async function unregisterConnection(
-  kv: Deno.Kv,
-  taskId: string,
-  connectionId: string,
-): Promise<boolean> {
-  try {
-    // 删除当前连接
-    await kv.delete(["active_connections", taskId, connectionId]);
-    console.log(`[${taskId}] 注销连接 ${connectionId.slice(-8)}`);
-
-    // 检查是否还有其他活跃连接
-    const connections = kv.list<ActiveConnection>({
-      prefix: ["active_connections", taskId],
-    });
-    const activeConnections = [];
-
-    for await (const connection of connections) {
-      activeConnections.push(connection);
-    }
-
-    console.log(`[${taskId}] 剩余活跃连接: ${activeConnections.length}`);
-    return activeConnections.length === 0; // 如果没有活跃连接，返回true表示应该中止
-  } catch (error) {
-    console.warn(`[${taskId}] 注销连接失败:`, error);
-    return true; // 出错时保守地中止任务
-  }
-}
 
 /**
  * 安全的任务处理
  */
 async function processTaskSafely(
-  controller: ReadableStreamDefaultController,
-  taskId: string,
+  download: ActiveDownload,
   task: TaskMeta,
   kv: Deno.Kv,
-  connectionId: string,
 ) {
-  // 恢复原版clientState的逻辑，它会根据超时判断并标记disconnected
-  const clientState = { disconnected: false, lastActivity: Date.now() };
-
-  // Set up a mechanism to check if the client is still connected (恢复原版逻辑)
-  const setupAbortChecker = () => {
-    const checkConnection = async () => {
-      try {
-        // Check for aborted task flag in KV
-        const aborted = await kv.get(["task_aborted", taskId]);
-        if (aborted.value) {
-          console.log(
-            `[${taskId}] 🛑 任务之前已中止，停止处理 (由KV标志检测)`,
-          );
-          clientState.disconnected = true;
-          return;
-        }
-
-        // Check if this connection has been taken over
-        const takeover = await kv.get([
-          "connection_takeover",
-          taskId,
-          connectionId,
-        ]);
-        if (takeover.value) {
-          console.log(
-            `[${taskId}] 🔄 连接 ${connectionId.slice(-8)} 被接管，停止处理`,
-          );
-          clientState.disconnected = true;
-          return;
-        }
-
-        // Skip controller check - it's normal for controller to close after download completion
-
-        // Check if there are still active connections
-        const connections = kv.list<ActiveConnection>({
-          prefix: ["active_connections", taskId],
-        });
-        const activeConnections = [];
-        for await (const connection of connections) {
-          activeConnections.push(connection);
-        }
-
-        if (activeConnections.length === 0) {
-          console.log(
-            `[${taskId}] 📵 没有活跃连接，标记为断开`,
-          );
-          clientState.disconnected = true;
-          return;
-        }
-
-        // If too much time has passed since last successful write, consider connection dead
-        const timeSinceActivity = Date.now() - clientState.lastActivity;
-        if (timeSinceActivity > 15000) { // 15 seconds of inactivity
-          console.log(
-            `[${taskId}] ⏱️ 客户端 ${
-              Math.round(timeSinceActivity / 1000)
-            }秒无活动，标记为断开`,
-          );
-          clientState.disconnected = true;
-          return; // 标记断开后，不再安排下一次检查
-        }
-
-        // Still connected, schedule next check
-        if (!clientState.disconnected) {
-          setTimeout(checkConnection, 3000); // Check every 3 seconds
-        }
-      } catch (_e) {
-        setTimeout(checkConnection, 1000);
-      }
-    };
-    setTimeout(checkConnection, 3000); // Start checking for disconnection
-    return clientState; // Return the client state for the rest of the process to check
-  };
-
-  // Initialize client state tracker
-  const _clientStateInstance = setupAbortChecker(); // 调用并启动检查器，并将返回的clientState实例赋值给一个新变量
+  const { taskId, connectionId, controller } = download;
 
   try {
     let closed = false;
@@ -454,52 +271,45 @@ async function processTaskSafely(
       if (chunk && chunk.length > 0) {
         try {
           // Check for client disconnection before attempting to send data
-          // 根据原版，这里的clientState.disconnected判断是有的，保留
-          if (_clientStateInstance.disconnected) { // 使用实例变量
-            console.log(
-              `[${taskId}] 📵 客户端已断开连接，停止ZIP流发送`, // 日志修正
-            );
+          if (download.disconnected) {
+            console.log(`[${taskId}] 📵 客户端已断开连接，停止ZIP流发送`);
             closed = true;
             return;
           }
 
           // Also check if the controller is still writable
           if (!controller.desiredSize || controller.desiredSize < 0) {
-            console.log(
-              `[${taskId}] ⚠️ 流不再可写，标记为已断开连接并停止发送`, // 日志修正
-            );
+            console.log(`[${taskId}] ⚠️ 流不再可写，标记为已断开连接并停止发送`);
             closed = true;
-            _clientStateInstance.disconnected = true; // 即使这里，也标记一下，保持一致
+            download.disconnected = true;
             return;
           }
 
           // Only enqueue if we're sure the client is still connected
           try {
             controller.enqueue(chunk);
-            // Update last activity timestamp when we successfully write to the stream
-            _clientStateInstance.lastActivity = Date.now(); // 使用实例变量
           } catch (_enqueueError) {
             console.log(`[${taskId}] ⚠️ 控制器已关闭，无法发送数据块`);
             closed = true;
-            _clientStateInstance.disconnected = true;
+            download.disconnected = true;
             return;
           }
         } catch (e) {
-          console.error(`[${taskId}] 控制器写入错误:`, e); // 日志修正
+          console.error(`[${taskId}] 控制器写入错误:`, e);
           closed = true;
-          _clientStateInstance.disconnected = true;
+          download.disconnected = true;
         }
       }
 
       if (final && !closed) {
         try {
           // One final check before closing
-          if (!_clientStateInstance.disconnected) { // 使用实例变量
+          if (!download.disconnected) {
             console.log(`[${taskId}] ✅ 完成`);
             controller.close();
           }
         } catch (e) {
-          console.error(`[${taskId}] 关闭流错误:`, e); // 日志修正
+          console.error(`[${taskId}] 关闭流错误:`, e);
         } finally {
           closed = true;
         }
@@ -511,7 +321,7 @@ async function processTaskSafely(
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
     // 检查客户端是否还在连接
-    if (_clientStateInstance.disconnected) {
+    if (download.disconnected) {
       console.log(`[${taskId}] 🛑 客户端已断开，停止处理`);
       return;
     }
@@ -522,21 +332,19 @@ async function processTaskSafely(
     if (task.includeMetadata) {
       console.log(`[${taskId}] 📄 添加metadata.json`);
 
-      // Check if client has disconnected before processing metadata (原版逻辑)
-      if (_clientStateInstance.disconnected) { // 使用实例变量
-        console.log(
-          `[${taskId}] 🛑 跳过元数据处理，客户端已断开连接`, // 日志修正
-        );
+      // Check if client has disconnected before processing metadata
+      if (download.disconnected) {
+        console.log(`[${taskId}] 🛑 跳过元数据处理，客户端已断开连接`);
       } else {
         await writeMetadataWithAbortCheck(
           zip,
           taskId,
           task,
           kv,
-          _clientStateInstance,
-        ); // 传递实例变量
+          download,
+        );
 
-        if (!_clientStateInstance.disconnected) { // 只有在连接未断开时才清理元数据
+        if (!download.disconnected) { // 只有在连接未断开时才清理元数据
           console.log(`[${taskId}] 🧹 从KV中清除元数据`);
           await clearMetadata(taskId, task, kv);
         }
@@ -546,13 +354,13 @@ async function processTaskSafely(
     let successCount = 0;
     let errorCount = 0;
 
-    // Modified to pass client state and check for disconnection (原版逻辑)
+    // Modified to pass client state and check for disconnection
     await processImagesWithAbortCheck(
       zip,
       taskId,
       task,
       kv,
-      _clientStateInstance, // 传递实例变量
+      download,
       (success) => {
         if (success) {
           successCount++;
@@ -562,10 +370,8 @@ async function processTaskSafely(
       },
     );
 
-    if (_clientStateInstance.disconnected) { // 使用实例变量
-      console.log(
-        `[${taskId}] 🛑 图片处理中止，客户端已断开连接`, // 日志修正
-      );
+    if (download.disconnected) {
+      console.log(`[${taskId}] 🛑 图片处理中止，客户端已断开连接`);
       // Don't finalize the ZIP since client is gone
       return;
     }
@@ -594,11 +400,11 @@ async function writeMetadataWithAbortCheck(
   taskId: string,
   task: TaskMeta,
   kv: Deno.Kv,
-  clientState: { disconnected: boolean; lastActivity: number },
+  download: ActiveDownload,
 ) {
-  // Check for client disconnection before starting (原版逻辑)
-  if (clientState.disconnected) {
-    console.log(`[${taskId}] 🛑 跳过元数据处理，客户端已断开连接`); // 日志修正
+  // Check for client disconnection before starting
+  if (download.disconnected) {
+    console.log(`[${taskId}] 🛑 跳过元数据处理，客户端已断开连接`);
     return;
   }
 
@@ -616,11 +422,9 @@ async function writeMetadataWithAbortCheck(
 
   // Process each metadata chunk
   for (let i = 0; i < task.totalChunks; i++) {
-    // Check for disconnection before each chunk (原版逻辑)
-    if (clientState.disconnected) {
-      console.log(
-        `[${taskId}] 🛑 元数据处理中止，客户端已断开连接`, // 日志修正
-      );
+    // Check for disconnection before each chunk
+    if (download.disconnected) {
+      console.log(`[${taskId}] 🛑 元数据处理中止，客户端已断开连接`);
       return;
     }
 
@@ -648,11 +452,9 @@ async function writeMetadataWithAbortCheck(
         // Ignore GC errors - not all environments support it
       }
 
-      // Ensure we're still connected (原版逻辑)
-      if (clientState.disconnected) {
-        console.log(
-          `[${taskId}] 🛑 元数据处理中止，客户端已断开连接`, // 日志修正
-        );
+      // Ensure we're still connected
+      if (download.disconnected) {
+        console.log(`[${taskId}] 🛑 元数据处理中止，客户端已断开连接`);
         return;
       }
 
@@ -661,11 +463,9 @@ async function writeMetadataWithAbortCheck(
     }
   }
 
-  // Check for disconnection before writing file (原版逻辑)
-  if (clientState.disconnected) {
-    console.log(
-      `[${taskId}] 🛑 元数据写入中止，客户端已断开连接`, // 日志修正
-    );
+  // Check for disconnection before writing file
+  if (download.disconnected) {
+    console.log(`[${taskId}] 🛑 元数据写入中止，客户端已断开连接`);
     return;
   }
 
@@ -738,18 +538,16 @@ async function processImagesWithAbortCheck(
   taskId: string,
   task: TaskMeta,
   kv: Deno.Kv,
-  clientState: { disconnected: boolean; lastActivity: number },
+  download: ActiveDownload,
   progressCallback?: (success: boolean) => void,
 ) {
   let processed = 0;
   const batchStart = Date.now();
 
   for (let i = 0; i < task.totalChunks; i++) {
-    // Check if client has disconnected before processing each chunk (原版逻辑)
-    if (clientState.disconnected) {
-      console.log(
-        `[${taskId}] 🛑 中止图片处理，客户端已断开连接`, // 日志修正
-      );
+    // Check if client has disconnected before processing each chunk
+    if (download.disconnected) {
+      console.log(`[${taskId}] 🛑 中止图片处理，客户端已断开连接`);
       return;
     }
 
@@ -783,11 +581,9 @@ async function processImagesWithAbortCheck(
     // No need to clear chunk.value reference here
 
     for (let j = 0; j < imageArray.length; j += batchSize) {
-      // Check for disconnection before each batch (原版逻辑)
-      if (clientState.disconnected) {
-        console.log(
-          `[${taskId}] 🛑 中止图片批处理，客户端已断开连接`, // 日志修正
-        );
+      // Check for disconnection before each batch
+      if (download.disconnected) {
+        console.log(`[${taskId}] 🛑 中止图片批处理，客户端已断开连接`);
         return;
       }
 
@@ -795,8 +591,8 @@ async function processImagesWithAbortCheck(
 
       for (const img of batchImages) {
         try {
-          // Check for disconnection before each image (原版逻辑)
-          if (clientState.disconnected) {
+          // Check for disconnection before each image
+          if (download.disconnected) {
             return;
           }
 
@@ -808,8 +604,8 @@ async function processImagesWithAbortCheck(
             task.includeThumbnails && img.thumbnailUrl &&
             img.thumbnailUrl !== img.url
           ) {
-            // Check for disconnection before processing thumbnail (原版逻辑)
-            if (clientState.disconnected) {
+            // Check for disconnection before processing thumbnail
+            if (download.disconnected) {
               return;
             }
 
