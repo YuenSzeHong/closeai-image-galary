@@ -523,27 +523,7 @@ async function processTaskSafely(
           }
           lockAcquired = true;
         } else {
-          // 如果是最近的锁（10秒内），说明任务正在处理中，但我们已经接管了
-          if (lockAge < 10 * 1000) {
-            console.log(
-              `[${taskId}] ⏳ 任务刚刚开始处理 (${
-                Math.round(lockAge / 1000)
-              }秒前)，继续处理（已接管前一个请求）`,
-            );
-            // 强制获取锁，因为我们接管了前一个请求
-            await kv.delete(lockKey);
-            const retryResult = await kv.atomic()
-              .check({ key: lockKey, versionstamp: null })
-              .set(lockKey, lockData, { expireIn: 5 * 60 * 1000 })
-              .commit();
-            if (retryResult.ok) {
-              lockAcquired = true;
-            } else {
-              throw new Error("无法获取任务锁");
-            }
-          } else {
-            throw new Error("任务正在被另一个请求处理中");
-          }
+          throw new Error("任务正在被另一个请求处理中");
         }
       } else {
         throw new Error("无法获取任务锁");
