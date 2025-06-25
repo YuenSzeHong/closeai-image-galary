@@ -94,13 +94,18 @@ export const handler: Handlers = {
   async GET(req, ctx: FreshContext) {
     const taskId = ctx.params.taskId;
     const connectionId = crypto.randomUUID();
-    
+
     // 检测是否为IDM或类似下载工具
-    const acceptEncoding = req.headers.get('accept-encoding') || '';
-    const hasSecFetch = req.headers.has('sec-fetch-dest');
-    const isDownloadManager = acceptEncoding.includes('identity') && !hasSecFetch;
-    
-    console.log(`[${taskId}] 📥 开始下载 (连接ID: ${connectionId.slice(-8)}) ${isDownloadManager ? '[IDM]' : '[浏览器]'}`);
+    const acceptEncoding = req.headers.get("accept-encoding") || "";
+    const hasSecFetch = req.headers.has("sec-fetch-dest");
+    const isDownloadManager = acceptEncoding.includes("identity") &&
+      !hasSecFetch;
+
+    console.log(
+      `[${taskId}] 📥 开始下载 (连接ID: ${connectionId.slice(-8)}) ${
+        isDownloadManager ? "[IDM]" : "[浏览器]"
+      }`,
+    );
 
     try {
       const kv = await getKv();
@@ -119,7 +124,7 @@ export const handler: Handlers = {
 
       // 清理可能存在的僵尸锁（重启后的锁都是无效的）
       await cleanupZombieLocks(taskId, kv);
-      
+
       // 清理旧的中止标志，开始新的下载任务
       await kv.delete(["task_aborted", taskId]);
 
@@ -134,17 +139,29 @@ export const handler: Handlers = {
       });
 
       // 后来的请求接管：检查是否有现有连接，如果有就接管
-      const shouldTakeover = await handleRequestTakeover(kv, taskId, connectionId, isDownloadManager);
-      
+      await handleRequestTakeover(kv, taskId, connectionId, isDownloadManager);
+
       // 注册活跃连接
-      await registerConnection(kv, taskId, connectionId, req.headers.get('user-agent'), isDownloadManager);
-      
+      await registerConnection(
+        kv,
+        taskId,
+        connectionId,
+        req.headers.get("user-agent"),
+        isDownloadManager,
+      );
+
       return new Response(
         new ReadableStream({
           async start(controller) {
             try {
               // 关键：这里不再添加2秒延迟，因为原版没有，且这可能是导致流提前关闭的原因之一
-              await processTaskSafely(controller, taskId, task, kv, connectionId);
+              await processTaskSafely(
+                controller,
+                taskId,
+                task,
+                kv,
+                connectionId,
+              );
             } catch (error) {
               console.error(`[${taskId}] 流处理错误:`, error);
 
@@ -164,17 +181,19 @@ export const handler: Handlers = {
                   if (
                     errorMessage.includes("任务正在被另一个请求处理中")
                   ) {
+                    // 不返回文本消息，而是返回503状态让客户端重试
+                    console.log(
+                      `[${taskId}] 任务正在处理中，关闭连接让客户端重试`,
+                    );
                     try {
-                      const message = "下载处理中，请稍等一会再点击下载按钮...";
-                      controller.enqueue(new TextEncoder().encode(message));
                       controller.close();
-                    } catch (controllerError) {
-                      console.log(`[${taskId}] 控制器已关闭，无法发送重试消息`);
+                    } catch (_controllerError) {
+                      console.log(`[${taskId}] 控制器已关闭`);
                     }
                   } else {
                     try {
                       controller.error(error);
-                    } catch (controllerError) {
+                    } catch (_controllerError) {
                       console.log(`[${taskId}] 控制器已关闭，无法发送错误`);
                     }
                   }
@@ -193,15 +212,21 @@ export const handler: Handlers = {
           // Handle client disconnection/abort events
           async cancel(reason) {
             console.log(
-              `[${taskId}] 🚫 客户端已断开连接 (${connectionId.slice(-8)}): ${reason || "未知原因"}`,
+              `[${taskId}] 🚫 客户端已断开连接 (${connectionId.slice(-8)}): ${
+                reason || "未知原因"
+              }`,
             );
 
             // 注销连接并检查是否还有其他活跃连接
-            const shouldAbort = await unregisterConnection(kv, taskId, connectionId);
-            
+            const shouldAbort = await unregisterConnection(
+              kv,
+              taskId,
+              connectionId,
+            );
+
             if (shouldAbort) {
               console.log(`[${taskId}] 所有连接已断开，中止任务`);
-              
+
               // 清理资源并在客户端断开连接时释放锁
               kv.delete(["task_lock", taskId]).catch((e) => {
                 console.error(
@@ -235,39 +260,56 @@ export const handler: Handlers = {
 /**
  * 处理请求接管逻辑
  */
-async function handleRequestTakeover(kv: Deno.Kv, taskId: string, newConnectionId: string, isDownloadManager: boolean): Promise<boolean> {
+async function handleRequestTakeover(
+  kv: Deno.Kv,
+  taskId: string,
+  newConnectionId: string,
+  isDownloadManager: boolean,
+): Promise<boolean> {
   try {
     // 检查现有的活跃连接
-    const connections = kv.list<ActiveConnection>({ prefix: ["active_connections", taskId] });
+    const connections = kv.list<ActiveConnection>({
+      prefix: ["active_connections", taskId],
+    });
     const existingConnections = [];
-    
+
     for await (const connection of connections) {
       existingConnections.push(connection);
     }
-    
+
     if (existingConnections.length > 0) {
-      console.log(`[${taskId}] 🔄 检测到 ${existingConnections.length} 个现有连接，新请求将接管`);
-      
+      console.log(
+        `[${taskId}] 🔄 检测到 ${existingConnections.length} 个现有连接，新请求将接管`,
+      );
+
       // 标记所有现有连接应该被接管
       for (const connection of existingConnections) {
-        await kv.set(["connection_takeover", taskId, connection.value.connectionId], {
+        await kv.set([
+          "connection_takeover",
+          taskId,
+          connection.value.connectionId,
+        ], {
           takenOverBy: newConnectionId,
           timestamp: Date.now(),
         }, { expireIn: 60 * 1000 }); // 1分钟过期
-        
-        console.log(`[${taskId}] 🔄 标记连接 ${connection.value.connectionId.slice(-8)} 被接管`);
+
+        console.log(
+          `[${taskId}] 🔄 标记连接 ${
+            connection.value.connectionId.slice(-8)
+          } 被接管`,
+        );
       }
-      
+
       // 设置接管标志，让旧的请求知道被接管了
       await kv.set(["task_takeover", taskId], {
         newConnectionId,
         timestamp: Date.now(),
         isDownloadManager,
       }, { expireIn: 60 * 1000 });
-      
+
       return true; // 表示发生了接管
     }
-    
+
     return false; // 没有现有连接，不需要接管
   } catch (error) {
     console.warn(`[${taskId}] 处理请求接管失败:`, error);
@@ -278,16 +320,28 @@ async function handleRequestTakeover(kv: Deno.Kv, taskId: string, newConnectionI
 /**
  * 注册活跃连接
  */
-async function registerConnection(kv: Deno.Kv, taskId: string, connectionId: string, userAgent?: string | null, isDownloadManager?: boolean): Promise<void> {
+async function registerConnection(
+  kv: Deno.Kv,
+  taskId: string,
+  connectionId: string,
+  userAgent?: string | null,
+  isDownloadManager?: boolean,
+): Promise<void> {
   try {
     const connection: ActiveConnection = {
       connectionId,
       startTime: Date.now(),
       userAgent: userAgent || undefined,
     };
-    
-    await kv.set(["active_connections", taskId, connectionId], connection, { expireIn: 60 * 60 * 1000 }); // 1小时过期
-    console.log(`[${taskId}] 注册连接 ${connectionId.slice(-8)} ${isDownloadManager ? '[IDM]' : '[浏览器]'}`);
+
+    await kv.set(["active_connections", taskId, connectionId], connection, {
+      expireIn: 60 * 60 * 1000,
+    }); // 1小时过期
+    console.log(
+      `[${taskId}] 注册连接 ${connectionId.slice(-8)} ${
+        isDownloadManager ? "[IDM]" : "[浏览器]"
+      }`,
+    );
   } catch (error) {
     console.warn(`[${taskId}] 注册连接失败:`, error);
   }
@@ -296,20 +350,26 @@ async function registerConnection(kv: Deno.Kv, taskId: string, connectionId: str
 /**
  * 注销连接并返回是否应该中止任务
  */
-async function unregisterConnection(kv: Deno.Kv, taskId: string, connectionId: string): Promise<boolean> {
+async function unregisterConnection(
+  kv: Deno.Kv,
+  taskId: string,
+  connectionId: string,
+): Promise<boolean> {
   try {
     // 删除当前连接
     await kv.delete(["active_connections", taskId, connectionId]);
     console.log(`[${taskId}] 注销连接 ${connectionId.slice(-8)}`);
-    
+
     // 检查是否还有其他活跃连接
-    const connections = kv.list<ActiveConnection>({ prefix: ["active_connections", taskId] });
+    const connections = kv.list<ActiveConnection>({
+      prefix: ["active_connections", taskId],
+    });
     const activeConnections = [];
-    
+
     for await (const connection of connections) {
       activeConnections.push(connection);
     }
-    
+
     console.log(`[${taskId}] 剩余活跃连接: ${activeConnections.length}`);
     return activeConnections.length === 0; // 如果没有活跃连接，返回true表示应该中止
   } catch (error) {
@@ -371,7 +431,11 @@ async function processTaskSafely(
         }
 
         // Check if this connection has been taken over
-        const takeover = await kv.get(["connection_takeover", taskId, connectionId]);
+        const takeover = await kv.get([
+          "connection_takeover",
+          taskId,
+          connectionId,
+        ]);
         if (takeover.value) {
           console.log(
             `[${taskId}] 🔄 连接 ${connectionId.slice(-8)} 被接管，停止处理`,
@@ -380,22 +444,17 @@ async function processTaskSafely(
           return;
         }
 
-        // Check if we can still write to the controller
-        if (!controller.desiredSize || controller.desiredSize < 0) {
-          console.log(
-            `[${taskId}] 🚫 客户端似乎已断开连接（控制器已关闭）`,
-          );
-          clientState.disconnected = true;
-          return; // 如果控制器已关闭，不再安排下一次检查
-        }
+        // Skip controller check - it's normal for controller to close after download completion
 
         // Check if there are still active connections
-        const connections = kv.list<ActiveConnection>({ prefix: ["active_connections", taskId] });
+        const connections = kv.list<ActiveConnection>({
+          prefix: ["active_connections", taskId],
+        });
         const activeConnections = [];
         for await (const connection of connections) {
           activeConnections.push(connection);
         }
-        
+
         if (activeConnections.length === 0) {
           console.log(
             `[${taskId}] 📵 没有活跃连接，标记为断开`,
@@ -510,7 +569,7 @@ async function processTaskSafely(
           closed = true;
           try {
             controller.error(new Error(`ZIP错误: ${err.message}`));
-          } catch (controllerError) {
+          } catch (_controllerError) {
             console.log(`[${taskId}] 控制器已关闭，无法发送ZIP错误`);
           }
         }
@@ -544,7 +603,7 @@ async function processTaskSafely(
             controller.enqueue(chunk);
             // Update last activity timestamp when we successfully write to the stream
             _clientStateInstance.lastActivity = Date.now(); // 使用实例变量
-          } catch (enqueueError) {
+          } catch (_enqueueError) {
             console.log(`[${taskId}] ⚠️ 控制器已关闭，无法发送数据块`);
             closed = true;
             _clientStateInstance.disconnected = true;
@@ -570,7 +629,21 @@ async function processTaskSafely(
           closed = true;
         }
       }
-    }; // 先处理元数据
+    };
+
+    // 给用户时间确认保存
+    console.log(`[${taskId}] ⏳ 等待用户确认保存 (3秒)`);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // 检查客户端是否还在连接
+    if (_clientStateInstance.disconnected) {
+      console.log(`[${taskId}] 🛑 客户端已断开，停止处理`);
+      return;
+    }
+
+    console.log(`[${taskId}] 🚀 开始处理内容`);
+
+    // 先处理元数据
     if (task.includeMetadata) {
       console.log(`[${taskId}] 📄 添加metadata.json`);
 
@@ -816,9 +889,9 @@ async function processImagesWithAbortCheck(
     // Only log progress periodically instead of for every image
     const now = Date.now();
     const elapsedSeconds = (now - batchStart) / 1000;
-    
-    const processingRate = elapsedSeconds > 0 && processed > 0 
-      ? processed / elapsedSeconds 
+
+    const processingRate = elapsedSeconds > 0 && processed > 0
+      ? processed / elapsedSeconds
       : 0;
     console.log(
       `[${taskId}] 📦 数据块 ${i + 1}/${task.totalChunks} (${
