@@ -23,11 +23,6 @@ interface TaskMeta {
   finalZipSizeBytes?: number; // 新增：存储最终ZIP文件的大小，供HEAD请求使用
 }
 
-interface TaskLock {
-  startTime: number;
-  clientId: string;
-}
-
 interface ActiveConnection {
   connectionId: string;
   startTime: number;
@@ -122,9 +117,6 @@ export const handler: Handlers = {
         `[${taskId}] 📊 找到${task.totalImages}张图片，分布在${task.totalChunks}个数据块中`,
       );
 
-      // 清理可能存在的僵尸锁（重启后的锁都是无效的）
-      await cleanupZombieLocks(taskId, kv);
-
       // 清理旧的中止标志，开始新的下载任务
       await kv.delete(["task_aborted", taskId]);
 
@@ -165,37 +157,16 @@ export const handler: Handlers = {
             } catch (error) {
               console.error(`[${taskId}] 流处理错误:`, error);
 
-              // 确保清理锁
-              await kv.delete(["task_lock", taskId]).catch(() => {});
-
               // Check if the stream is still writable before trying to send an error
               try {
                 // Ensure we can still write to the controller
                 if (
                   controller.desiredSize !== null && controller.desiredSize >= 0
                 ) {
-                  // If the error is about concurrent processing, send a special response
-                  const errorMessage = error instanceof Error
-                    ? error.message
-                    : String(error);
-                  if (
-                    errorMessage.includes("任务正在被另一个请求处理中")
-                  ) {
-                    // 不返回文本消息，而是返回503状态让客户端重试
-                    console.log(
-                      `[${taskId}] 任务正在处理中，关闭连接让客户端重试`,
-                    );
-                    try {
-                      controller.close();
-                    } catch (_controllerError) {
-                      console.log(`[${taskId}] 控制器已关闭`);
-                    }
-                  } else {
-                    try {
-                      controller.error(error);
-                    } catch (_controllerError) {
-                      console.log(`[${taskId}] 控制器已关闭，无法发送错误`);
-                    }
+                  try {
+                    controller.error(error);
+                  } catch (_controllerError) {
+                    console.log(`[${taskId}] 控制器已关闭，无法发送错误`);
                   }
                 } else {
                   // Stream is already closed or errored, just log it
@@ -226,14 +197,6 @@ export const handler: Handlers = {
 
             if (shouldAbort) {
               console.log(`[${taskId}] 所有连接已断开，中止任务`);
-
-              // 清理资源并在客户端断开连接时释放锁
-              kv.delete(["task_lock", taskId]).catch((e) => {
-                console.error(
-                  `[${taskId}] 断开连接时释放锁失败:`,
-                  e,
-                );
-              });
 
               // Store abort event in KV for tracking
               kv.set(["task_aborted", taskId], {
@@ -379,30 +342,6 @@ async function unregisterConnection(
 }
 
 /**
- * 清理僵尸锁
- */
-async function cleanupZombieLocks(taskId: string, kv: Deno.Kv): Promise<void> {
-  try {
-    const lockKey = ["task_lock", taskId];
-    const existingLock = await kv.get(lockKey);
-
-    if (existingLock.value) {
-      const lockAge = Date.now() -
-        ((existingLock.value as TaskLock).startTime || 0);
-      // 超过2分钟的锁认为是僵尸锁
-      if (lockAge > 2 * 60 * 1000) {
-        console.log(
-          `[${taskId}] 🧹 清理僵尸锁 (${Math.round(lockAge / 1000)}秒前)`,
-        );
-        await kv.delete(lockKey);
-      }
-    }
-  } catch (error) {
-    console.warn(`[${taskId}] 清理僵尸锁失败:`, error);
-  }
-}
-
-/**
  * 安全的任务处理
  */
 async function processTaskSafely(
@@ -412,7 +351,6 @@ async function processTaskSafely(
   kv: Deno.Kv,
   connectionId: string,
 ) {
-  let lockAcquired = false;
   // 恢复原版clientState的逻辑，它会根据超时判断并标记disconnected
   const clientState = { disconnected: false, lastActivity: Date.now() };
 
@@ -491,49 +429,6 @@ async function processTaskSafely(
   const _clientStateInstance = setupAbortChecker(); // 调用并启动检查器，并将返回的clientState实例赋值给一个新变量
 
   try {
-    // 🔒 尝试获取任务锁，使用更短的超时
-    const lockKey = ["task_lock", taskId];
-    const lockData = { startTime: Date.now(), pid: crypto.randomUUID() };
-
-    const lockResult = await kv.atomic()
-      .check({ key: lockKey, versionstamp: null })
-      .set(lockKey, lockData, { expireIn: 5 * 60 * 1000 }) // 5分钟锁
-      .commit();
-    if (!lockResult.ok) {
-      // 检查锁的年龄，如果太老直接抢占
-      const existingLock = await kv.get(lockKey);
-      if (existingLock.value) {
-        const lockAge = Date.now() -
-          ((existingLock.value as TaskLock).startTime || 0);
-
-        // 如果锁过期（2分钟），则强制释放
-        if (lockAge > 2 * 60 * 1000) {
-          console.warn(
-            `[${taskId}] 抢占过期锁 (${Math.round(lockAge / 1000)}秒)`,
-          );
-          await kv.delete(lockKey);
-
-          const retryResult = await kv.atomic()
-            .check({ key: lockKey, versionstamp: null })
-            .set(lockKey, lockData, { expireIn: 5 * 60 * 1000 })
-            .commit();
-
-          if (!retryResult.ok) {
-            throw new Error("无法获取任务锁");
-          }
-          lockAcquired = true;
-        } else {
-          throw new Error("任务正在被另一个请求处理中");
-        }
-      } else {
-        throw new Error("无法获取任务锁");
-      }
-    } else {
-      lockAcquired = true;
-    }
-
-    console.log(`[${taskId}] 🔒 获取任务锁`);
-
     let closed = false;
 
     // 配置低压缩ZIP以减少CPU使用
@@ -687,15 +582,7 @@ async function processTaskSafely(
     console.error(`[${taskId}] 任务处理发生错误:`, error); // 日志修正
     throw error;
   } finally {
-    // 🔒 释放任务锁
-    if (lockAcquired) {
-      try {
-        await kv.delete(["task_lock", taskId]);
-        console.log(`[${taskId}] 🔓 释放任务锁`);
-      } catch (lockError) {
-        console.error(`[${taskId}] 释放锁时发生错误:`, lockError); // 日志修正
-      }
-    }
+    // Task processing cleanup completed
   }
 }
 
