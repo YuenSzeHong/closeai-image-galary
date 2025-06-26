@@ -23,7 +23,7 @@
     "preact": "https://esm.sh/preact@10.22.0",
     "preact/": "https://esm.sh/preact@10.22.0/",
     "zod": "https://deno.land/x/zod@v3.22.4/mod.ts",
-    "fflate": "npm:fflate@^0.8.2"
+    "client-zip": "https://esm.sh/client-zip@2.4.4"
   },
   "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "preact" },
   "nodeModulesDir": "auto"
