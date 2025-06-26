@@ -277,9 +277,9 @@ async function processTaskSafely(
             return;
           }
 
-          // Also check if the controller is still writable
-          if (!controller.desiredSize || controller.desiredSize < 0) {
-            console.log(`[${taskId}] ⚠️ 流不再可写，标记为已断开连接并停止发送`);
+          // Check if the controller is closed (desiredSize will be null when closed)
+          if (controller.desiredSize === null) {
+            console.log(`[${taskId}] ⚠️ 流已关闭，停止发送`);
             closed = true;
             download.disconnected = true;
             return;
