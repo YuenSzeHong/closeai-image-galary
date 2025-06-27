@@ -15,6 +15,11 @@ import type {
   TaskMeta,
 } from "../../../types/export.ts";
 
+// Simple discriminated union for fetch results
+type FetchResult =
+  | { success: true; name: string; input: Response }
+  | { success: false };
+
 // 全局管理活跃的下载连接 - 每个任务同时只允许一个下载
 const activeDownloads = new Map<string, ActiveDownload>();
 
@@ -126,7 +131,9 @@ async function* generateZipEntries(
         }/${task.totalChunks} (${chunk.value.length}张图片)`,
       );
 
-      // Process each image in this chunk with proper error handling
+      // Create all fetch promises for this chunk
+      const fetchPromises = [];
+
       for (const img of chunk.value) {
         const currentDownload = activeDownloads.get(taskId);
         if (
@@ -142,11 +149,11 @@ async function* generateZipEntries(
         const id = img.id.slice(-8);
         const baseFilename = `${date}_${title}_${id}`;
 
-        // Create individual metadata JSON for this image
+        // Create individual metadata JSON for this image (immediate yield)
         if (task.includeMetadata) {
           const imageMetadata = {
             ...img,
-            created_at: new Date(img.created_at * 1000).toISOString(), // Convert to readable format
+            created_at: new Date(img.created_at * 1000).toISOString(),
             exported_at: new Date().toISOString(),
           };
 
@@ -157,50 +164,87 @@ async function* generateZipEntries(
           totalProcessed++;
         }
 
-        // Main image entry with proper async handling
-        try {
-          const response = await fetch(img.url);
-          if (response.ok) {
-            yield {
-              name: `${baseFilename}.${mainImageExt}`,
-              input: response,
-            };
-            totalProcessed++;
-          } else {
-            console.warn(
-              `[${taskId}] Failed to fetch ${img.url}: ${response.status}`,
-            );
-          }
-        } catch (err) {
-          console.warn(`[${taskId}] Error fetching ${img.url}:`, err);
-        }
+        // Main image fetch-and-yield promise
+        fetchPromises.push(
+          fetch(img.url)
+            .then((response) => {
+              if (response.ok) {
+                return {
+                  name: `${baseFilename}.${mainImageExt}`,
+                  input: response,
+                  success: true,
+                } as const;
+              } else {
+                console.warn(
+                  `[${taskId}] Failed to fetch main ${img.url}: ${response.status}`,
+                );
+                return { success: false } as const;
+              }
+            })
+            .catch((err) => {
+              console.warn(`[${taskId}] Error fetching main ${img.url}:`, err);
+              return { success: false } as const;
+            }),
+        );
 
-        // Thumbnail entry if available
+        // Thumbnail fetch-and-yield promise if needed
         if (
           task.includeThumbnails &&
           img.thumbnailUrl &&
           img.thumbnailUrl !== img.url &&
           img.thumbnailUrl.startsWith("http")
         ) {
-          try {
-            const response = await fetch(img.thumbnailUrl);
-            if (response.ok) {
-              yield {
-                name: `${baseFilename}_thumb.${thumbnailExt}`,
-                input: response,
-              };
-              totalProcessed++;
-            } else {
-              console.warn(
-                `[${taskId}] Failed to fetch ${img.thumbnailUrl}: ${response.status}`,
-              );
-            }
-          } catch (err) {
-            console.warn(
-              `[${taskId}] Error fetching ${img.thumbnailUrl}:`,
-              err,
-            );
+          fetchPromises.push(
+            fetch(img.thumbnailUrl)
+              .then((response) => {
+                if (response.ok) {
+                  return {
+                    name: `${baseFilename}_thumb.${thumbnailExt}`,
+                    input: response,
+                    success: true,
+                  } as const;
+                } else {
+                  console.warn(
+                    `[${taskId}] Failed to fetch thumb ${img.thumbnailUrl}: ${response.status}`,
+                  );
+                  return { success: false } as const;
+                }
+              })
+              .catch((err) => {
+                console.warn(
+                  `[${taskId}] Error fetching thumb ${img.thumbnailUrl}:`,
+                  err,
+                );
+                return { success: false } as const;
+              }),
+          );
+        }
+      }
+
+      // Process all fetches as they complete using Promise.race
+      while (fetchPromises.length > 0) {
+        try {
+          const completed = await Promise.race(fetchPromises);
+
+          // Remove the completed promise
+          const completedIndex = fetchPromises.findIndex((p) =>
+            p === Promise.resolve(completed)
+          );
+          if (completedIndex !== -1) {
+            fetchPromises.splice(completedIndex, 1);
           }
+
+          // Yield successful fetch immediately to ZIP
+          if (completed.success) {
+            yield {
+              name: completed.name,
+              input: completed.input,
+            };
+            totalProcessed++;
+          }
+        } catch (err) {
+          console.warn(`[${taskId}] Error in Promise.race:`, err);
+          break;
         }
       }
 

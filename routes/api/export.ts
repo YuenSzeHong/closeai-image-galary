@@ -8,7 +8,7 @@ import {
 import { getKv } from "../../utils/kv.ts";
 import { formatDateForFilename } from "../../utils/fileUtils.ts";
 import { extractThumbnailUrl } from "../../utils/metadataUtils.ts";
-import { type SseDownloadReadyEvent } from "../../lib/types.ts";
+import type { SseDownloadReadyEvent, SseStatusEvent, SseProgressEvent, SseErrorEvent } from "../../lib/types.ts";
 
 const ExportRequest = z.object({
   token: z.string().min(10),
@@ -158,19 +158,7 @@ async function processExport(
   includeThumbnails: boolean,
   kv: Deno.Kv,
 ) {
-  type EventData =
-    | { type: "status"; message: string }
-    | { type: "progress"; message: string; progress: number }
-    | {
-      type: "download_ready";
-      taskId: string;
-      filename: string;
-      downloadUrl: string;
-      totalImages: number;
-      missingThumbnails?: string[];
-      thumbnailStats?: { total: number; missing: number[] };
-    }
-    | { type: "error"; error: string };
+  type EventData = SseStatusEvent | SseProgressEvent | SseDownloadReadyEvent | SseErrorEvent;
 
   // Custom SSE send function with event type
   const send = (data: EventData) => {
@@ -232,8 +220,6 @@ async function processExport(
       send({
         type: "status",
         totalImages: allImages.length,
-        thumbnailsWith: allImages.length - missingTitles.length,
-        thumbnailsWithout: missingTitles.length,
         phase: "thumbnail_check",
       });
     }
@@ -245,13 +231,15 @@ async function processExport(
     // Generate workspace name for filename
     let workspace = "p"; // default for personal
     if (teamId && teamId !== "personal") {
-      workspace = teamName 
-        ? teamName.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 15)
+      workspace = teamName
+        ? teamName.toLowerCase().replace(/[^a-z0-9]/g, "_").substring(0, 15)
         : teamId.substring(0, 10);
     }
-    
+
     const timestamp = formatDateForFilename(Date.now() / 1000);
-    const filename = `images_${workspace}_${timestamp}${includeMetadata ? '_meta' : ''}${includeThumbnails ? '_thumbs' : ''}.zip`;
+    const filename = `images_${workspace}_${timestamp}${
+      includeMetadata ? "_meta" : ""
+    }${includeThumbnails ? "_thumbs" : ""}.zip`;
 
     // 创建任务元数据
     const taskMeta: TaskMeta = {
