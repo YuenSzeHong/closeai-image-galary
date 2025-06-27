@@ -2,6 +2,7 @@
 
 import { FreshContext, Handlers } from "$fresh/server.ts";
 import { downloadZip } from "client-zip";
+import type { InputWithMeta, InputWithSizeMeta } from "client-zip";
 import { getKv } from "../../../utils/kv.ts";
 import {
   formatDateForFilename,
@@ -24,45 +25,12 @@ async function* generateZipEntries(
   download: ActiveDownload,
   task: TaskMeta,
   kv: Deno.Kv,
-) {
+): AsyncGenerator<InputWithMeta | InputWithSizeMeta> {
   const { taskId } = download;
 
   console.log(`[${taskId}] 🚀 开始生成ZIP条目`);
 
-  // Add metadata first if requested
-  if (task.includeMetadata) {
-    console.log(`[${taskId}] 📄 添加metadata.json`);
-
-    const allImageData: ImageData[] = [];
-
-    // Load all metadata chunks
-    for (let i = 0; i < task.totalChunks; i++) {
-      const chunk = await kv.get<ImageData[]>(["meta_chunks", taskId, i]);
-      if (chunk.value) {
-        allImageData.push(...chunk.value);
-      }
-    }
-
-    const metadataJson = JSON.stringify(
-      {
-        images: allImageData,
-        count: allImageData.length,
-        exported_at: new Date().toISOString(),
-        version: "1.0",
-      },
-      null,
-      2,
-    );
-
-    yield {
-      name: "metadata.json",
-      input: metadataJson,
-    };
-
-    console.log(
-      `[${taskId}] ✅ metadata.json已添加 (${allImageData.length}条记录)`,
-    );
-  }
+  // Note: Individual JSON files are created alongside each image below
 
   // Detect file formats once by checking the first image
   console.log(`[${taskId}] 🔍 检测文件格式`);
@@ -158,30 +126,54 @@ async function* generateZipEntries(
         }/${task.totalChunks} (${chunk.value.length}张图片)`,
       );
 
-      // Yield all images in this chunk for streaming (no await to prevent memory issues)
-      const imageEntries = chunk.value.map((img) => {
+      // Process each image in this chunk with proper error handling
+      for (const img of chunk.value) {
         const currentDownload = activeDownloads.get(taskId);
         if (
           !currentDownload ||
           currentDownload.connectionId !== download.connectionId
         ) {
-          return null;
+          console.log(`[${taskId}] 🛑 连接已被新连接取代，停止图片处理`);
+          return;
         }
 
         const date = formatDateForFilename(img.created_at);
         const title = sanitizeFilename(img.title, 50);
         const id = img.id.slice(-8);
+        const baseFilename = `${date}_${title}_${id}`;
 
-        const entries = [];
+        // Create individual metadata JSON for this image
+        if (task.includeMetadata) {
+          const imageMetadata = {
+            ...img,
+            created_at: new Date(img.created_at * 1000).toISOString(), // Convert to readable format
+            exported_at: new Date().toISOString(),
+          };
 
-        // Main image entry with error handling
-        entries.push({
-          name: `${date}_${title}_${id}.${mainImageExt}`,
-          input: fetch(img.url).catch(err => {
-            console.warn(`[${taskId}] Failed to fetch ${img.url}:`, err);
-            return new Response("", { status: 200 }); // Empty file instead of breaking
-          }),
-        });
+          yield {
+            name: `${baseFilename}.json`,
+            input: JSON.stringify(imageMetadata, null, 2),
+          };
+          totalProcessed++;
+        }
+
+        // Main image entry with proper async handling
+        try {
+          const response = await fetch(img.url);
+          if (response.ok) {
+            yield {
+              name: `${baseFilename}.${mainImageExt}`,
+              input: response,
+            };
+            totalProcessed++;
+          } else {
+            console.warn(
+              `[${taskId}] Failed to fetch ${img.url}: ${response.status}`,
+            );
+          }
+        } catch (err) {
+          console.warn(`[${taskId}] Error fetching ${img.url}:`, err);
+        }
 
         // Thumbnail entry if available
         if (
@@ -190,29 +182,26 @@ async function* generateZipEntries(
           img.thumbnailUrl !== img.url &&
           img.thumbnailUrl.startsWith("http")
         ) {
-          entries.push({
-            name: `${date}_${title}_${id}_thumb.${thumbnailExt}`,
-            input: fetch(img.thumbnailUrl).catch(err => {
-              console.warn(`[${taskId}] Failed to fetch ${img.thumbnailUrl}:`, err);
-              return new Response("", { status: 200 }); // Empty file instead of breaking
-            }),
-          });
+          try {
+            const response = await fetch(img.thumbnailUrl);
+            if (response.ok) {
+              yield {
+                name: `${baseFilename}_thumb.${thumbnailExt}`,
+                input: response,
+              };
+              totalProcessed++;
+            } else {
+              console.warn(
+                `[${taskId}] Failed to fetch ${img.thumbnailUrl}: ${response.status}`,
+              );
+            }
+          } catch (err) {
+            console.warn(
+              `[${taskId}] Error fetching ${img.thumbnailUrl}:`,
+              err,
+            );
+          }
         }
-
-        return entries;
-      }).filter(Boolean).flat();
-
-      // Yield all images from this chunk at once
-      for (const entry of imageEntries) {
-        const currentDownload = activeDownloads.get(taskId);
-        if (
-          !currentDownload ||
-          currentDownload.connectionId !== download.connectionId
-        ) {
-          return;
-        }
-        yield entry;
-        totalProcessed++;
       }
 
       console.log(
@@ -374,10 +363,10 @@ export const handler: Handlers = {
           }`,
           error,
         );
-        
+
         // Clean up on error
         activeDownloads.delete(taskId);
-        
+
         return new Response(
           `错误: ${error instanceof Error ? error.message : String(error)}`,
           { status: 500 },

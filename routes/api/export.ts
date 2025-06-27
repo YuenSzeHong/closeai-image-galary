@@ -13,6 +13,7 @@ import { type SseDownloadReadyEvent } from "../../lib/types.ts";
 const ExportRequest = z.object({
   token: z.string().min(10),
   teamId: z.string().optional(),
+  teamName: z.string().optional(),
   includeMetadata: z.boolean().default(true),
   includeThumbnails: z.boolean().default(true),
 });
@@ -45,7 +46,7 @@ export const handler: Handlers = {
   async POST(req, _ctx) {
     try {
       const body = await req.json();
-      const { token, teamId, includeMetadata, includeThumbnails } =
+      const { token, teamId, teamName, includeMetadata, includeThumbnails } =
         ExportRequest.parse(body);
 
       const taskId = crypto.randomUUID();
@@ -86,6 +87,7 @@ export const handler: Handlers = {
             taskId,
             token,
             teamId,
+            teamName,
             includeMetadata,
             includeThumbnails,
             kv,
@@ -151,6 +153,7 @@ async function processExport(
   taskId: string,
   token: string,
   teamId: string | undefined,
+  teamName: string | undefined,
   includeMetadata: boolean,
   includeThumbnails: boolean,
   kv: Deno.Kv,
@@ -239,11 +242,16 @@ async function processExport(
     const chunkSize = 25; // Reduced from 50 to 25 images per chunk
     const totalChunks = Math.ceil(allImages.length / chunkSize);
 
-    const workspace = teamId && teamId !== "personal"
-      ? teamId.substring(0, 10)
-      : "personal";
+    // Generate workspace name for filename
+    let workspace = "p"; // default for personal
+    if (teamId && teamId !== "personal") {
+      workspace = teamName 
+        ? teamName.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 15)
+        : teamId.substring(0, 10);
+    }
+    
     const timestamp = formatDateForFilename(Date.now() / 1000);
-    const filename = `chatgpt_images_${workspace}_${timestamp}.zip`;
+    const filename = `images_${workspace}_${timestamp}${includeMetadata ? '_meta' : ''}${includeThumbnails ? '_thumbs' : ''}.zip`;
 
     // 创建任务元数据
     const taskMeta: TaskMeta = {
