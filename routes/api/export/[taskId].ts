@@ -128,8 +128,12 @@ async function* generateZipEntries(
   const pendingPromises = new Set(chunkPromises);
 
   while (pendingPromises.size > 0) {
-    if (download.disconnected) {
-      console.log(`[${taskId}] 🛑 客户端已断开，停止处理`);
+    // Check if this specific connection is still active
+    const currentDownload = activeDownloads.get(taskId);
+    if (
+      !currentDownload || currentDownload.connectionId !== download.connectionId
+    ) {
+      console.log(`[${taskId}] 🛑 连接已被新连接取代，停止处理`);
       return;
     }
 
@@ -154,9 +158,15 @@ async function* generateZipEntries(
         }/${task.totalChunks} (${chunk.value.length}张图片)`,
       );
 
-      // Yield all images in this chunk simultaneously for maximum parallelism
+      // Yield all images in this chunk for streaming (no await to prevent memory issues)
       const imageEntries = chunk.value.map((img) => {
-        if (download.disconnected) return null;
+        const currentDownload = activeDownloads.get(taskId);
+        if (
+          !currentDownload ||
+          currentDownload.connectionId !== download.connectionId
+        ) {
+          return null;
+        }
 
         const date = formatDateForFilename(img.created_at);
         const title = sanitizeFilename(img.title, 50);
@@ -164,10 +174,13 @@ async function* generateZipEntries(
 
         const entries = [];
 
-        // Main image entry
+        // Main image entry with error handling
         entries.push({
           name: `${date}_${title}_${id}.${mainImageExt}`,
-          input: fetch(img.url),
+          input: fetch(img.url).catch(err => {
+            console.warn(`[${taskId}] Failed to fetch ${img.url}:`, err);
+            return new Response("", { status: 200 }); // Empty file instead of breaking
+          }),
         });
 
         // Thumbnail entry if available
@@ -179,7 +192,10 @@ async function* generateZipEntries(
         ) {
           entries.push({
             name: `${date}_${title}_${id}_thumb.${thumbnailExt}`,
-            input: fetch(img.thumbnailUrl),
+            input: fetch(img.thumbnailUrl).catch(err => {
+              console.warn(`[${taskId}] Failed to fetch ${img.thumbnailUrl}:`, err);
+              return new Response("", { status: 200 }); // Empty file instead of breaking
+            }),
           });
         }
 
@@ -188,7 +204,13 @@ async function* generateZipEntries(
 
       // Yield all images from this chunk at once
       for (const entry of imageEntries) {
-        if (download.disconnected) return;
+        const currentDownload = activeDownloads.get(taskId);
+        if (
+          !currentDownload ||
+          currentDownload.connectionId !== download.connectionId
+        ) {
+          return;
+        }
         yield entry;
         totalProcessed++;
       }
@@ -207,6 +229,10 @@ async function* generateZipEntries(
   console.log(
     `[${taskId}] 🎉 所有${totalProcessed}个文件已提交给client-zip处理`,
   );
+
+  // Clean up activeDownloads when generator completes
+  activeDownloads.delete(taskId);
+  console.log(`[${taskId}] 🧹 清理活跃下载连接`);
 }
 
 export const handler: Handlers = {
@@ -312,17 +338,6 @@ export const handler: Handlers = {
         activeDownloads.delete(taskId);
       }
 
-      // 创建流式响应
-      const headers = new Headers({
-        "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${task.filename}"`,
-        "Cache-Control": "no-store, must-revalidate",
-        "Accept-Ranges": "none", // 告诉IDM不支持范围请求
-        "X-Content-Type-Options": "nosniff",
-        "Transfer-Encoding": "chunked",
-        "Connection": "close", // 告诉IDM这是单线程连接
-      });
-
       // 注册活跃下载
       const download: ActiveDownload = {
         taskId,
@@ -344,7 +359,14 @@ export const handler: Handlers = {
         // Generate ZIP using client-zip with streaming
         const zipResponse = downloadZip(generateZipEntries(download, task, kv));
 
-        return zipResponse;
+        // Add filename header to the response
+        const responseHeaders = new Headers(zipResponse.headers);
+        responseHeaders.set(
+          "Content-Disposition",
+          `attachment; filename="${task.filename}"`,
+        );
+
+        return new Response(zipResponse.body, { headers: responseHeaders });
       } catch (error) {
         console.error(
           `[${taskId}] ZIP生成错误: ${
@@ -352,6 +374,10 @@ export const handler: Handlers = {
           }`,
           error,
         );
+        
+        // Clean up on error
+        activeDownloads.delete(taskId);
+        
         return new Response(
           `错误: ${error instanceof Error ? error.message : String(error)}`,
           { status: 500 },
